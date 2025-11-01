@@ -1,0 +1,51 @@
+package com.mipt.userstorage.model;
+
+public class CacheStorageEntity {
+
+  private Long id;
+  private String storageName;
+  private String cacheType;
+  private Integer maxSize;
+
+  public CacheStorageEntity() {
+  }
+
+  public CacheStorageEntity(String storageName, String cacheType, Integer maxSize) {
+    this.storageName = storageName;
+    this.cacheType = cacheType;
+    this.maxSize = maxSize;
+  }
+
+  // Геттеры и сеттеры
+  public Long getId() {
+    return id;
+  }
+
+  public void setId(Long id) {
+    this.id = id;
+  }
+
+  public String getStorageName() {
+    return storageName;
+  }
+
+  public void setStorageName(String storageName) {
+    this.storageName = storageName;
+  }
+
+  public String getCacheType() {
+    return cacheType;
+  }
+
+  public void setCacheType(String cacheType) {
+    this.cacheType = cacheType;
+  }
+
+  public Integer getMaxSize() {
+    return maxSize;
+  }
+
+  public void setMaxSize(Integer maxSize) {
+    this.maxSize = maxSize;
+  }
+}
