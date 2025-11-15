@@ -1,9 +1,9 @@
-package com.mipt.userstorage;
+package com.mipt;
 
 import com.mipt.userstorage.database.DatabaseInitializer;
 import com.mipt.userstorage.dao.*;
 import com.mipt.server.NettyHttpServer;
-import com.mipt.userstorage.service.CacheStorageService;
+import com.mipt.service.CacheStorageService;
 
 public class Main {
   public static void main(String[] args) {
