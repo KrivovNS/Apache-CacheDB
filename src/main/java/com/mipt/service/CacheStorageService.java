@@ -24,13 +24,26 @@ public class CacheStorageService {
     }
   }
 
-  private void createStorageCaches(String storageToken) {
+  public String createStorageCaches(String storageToken) {
     Map<String, Cache> typeCaches = new ConcurrentHashMap<>();
     typeCaches.put("json", new LRUCache(1000));
     typeCaches.put("byte[]", new LRUCache(1000));
     typeCaches.put("string", new LRUCache(1000));
     storageCaches.put(storageToken, typeCaches);
+    return storageToken;
   }
+
+  // Дополнительный метод для создания с автогенерацией токена
+  public String createStorageCaches() {
+    String storageToken = generateStorageToken();
+    return createStorageCaches(storageToken);
+  }
+
+  private String generateStorageToken() {
+    return "storage_" + System.currentTimeMillis() + "_" + (int)(Math.random() * 1000);
+  }
+
+
 
   public CacheResult readData(String storageToken, String dataType, String key) {
     try {
