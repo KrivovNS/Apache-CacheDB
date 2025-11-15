@@ -19,6 +19,9 @@ public class CacheStorageDAO {
       while (rs.next()) {
         CacheStorageEntity storage = new CacheStorageEntity();
         storage.setId(rs.getLong("id"));
+        storage.setStorageName(rs.getString("storage_name"));
+        storage.setCacheType(rs.getString("cache_type"));
+        storage.setMaxSize(rs.getInt("max_size"));
         storage.setStorageToken(rs.getString("storage_token"));
         storages.add(storage);
       }
@@ -42,6 +45,9 @@ public class CacheStorageDAO {
       if (rs.next()) {
         CacheStorageEntity storage = new CacheStorageEntity();
         storage.setId(rs.getLong("id"));
+        storage.setStorageName(rs.getString("storage_name"));
+        storage.setCacheType(rs.getString("cache_type"));
+        storage.setMaxSize(rs.getInt("max_size"));
         storage.setStorageToken(rs.getString("storage_token"));
         return storage;
       }

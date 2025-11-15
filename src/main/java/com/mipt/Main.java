@@ -4,6 +4,7 @@ import com.mipt.userstorage.database.DatabaseInitializer;
 import com.mipt.userstorage.dao.*;
 import com.mipt.server.NettyHttpServer;
 import com.mipt.service.CacheStorageService;
+import com.mipt.cache.FileDistributor;
 
 public class Main {
   public static void main(String[] args) {
@@ -20,10 +21,13 @@ public class Main {
       // 3. Инициализируем сервис кэшей
       CacheStorageService cacheService = new CacheStorageService(cacheStorageDAO);
 
-      // 4. Запускаем Netty HTTP сервер
+      // 4. Инициализируем распределитель файлов (ДОБАВИТЬ ЭТО)
+      FileDistributor fileDistributor = new FileDistributor(cacheService);
+
+      // 5. Запускаем Netty HTTP сервер
       int port = 8080;
       NettyHttpServer server = new NettyHttpServer(
-          port, cacheService, userDAO, permissionDAO, cacheStorageDAO
+          port, cacheService, userDAO, permissionDAO, cacheStorageDAO, fileDistributor
       );
 
       server.run();

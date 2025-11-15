@@ -1,7 +1,6 @@
 package com.mipt.service;
 
-import com.mipt.cache.Cache;
-import com.mipt.cache.LRUCache;
+import com.mipt.cache.*;
 import com.mipt.userstorage.dao.CacheStorageDAO;
 import com.mipt.userstorage.model.CacheStorageEntity;
 import java.util.Map;
@@ -17,49 +16,124 @@ public class CacheStorageService {
     initializeCaches();
   }
 
-  /**
-   * Инициализация кэшей из базы данных
-   */
   private void initializeCaches() {
     for (CacheStorageEntity entity : cacheStorageDAO.findAll()) {
       createCacheInMemory(entity);
     }
   }
 
-  /**
-   * Создание кэша в памяти на основе entity из БД
-   */
   public Cache createCacheInMemory(CacheStorageEntity entity) {
-    Cache cache = createCache();
+    Cache cache = new ConcurrentCache();
     activeCaches.put(entity.getStorageToken(), cache);
     return cache;
   }
 
-  /**
-   * Создание кэша по типу из entity
-   */
   private Cache createCache() {
     return new LRUCache(2024);
   }
 
   /**
-   * Получение кэша по имени
+   * Создание нового кэш-хранилища
    */
-  public Cache getCache(String storageToken) {
-    return activeCaches.get(storageToken);
+  public boolean createCacheStorage(String storageName, String cacheType, Integer maxSize) {
+    if (cacheExists(storageName)) {
+      return false;
+    }
+
+    Cache cache;
+    switch (cacheType.toUpperCase()) {
+      case "SIMPLE":
+        cache = new SimpleCache();
+        break;
+      case "CONCURRENT":
+        cache = new ConcurrentCache();
+        break;
+      case "LRU":
+        if (maxSize != null && maxSize > 0) {
+          cache = new LRUCache(maxSize);
+        } else {
+          cache = new LRUCache(100);
+        }
+        break;
+      default:
+        cache = new ConcurrentCache();
+    }
+
+    activeCaches.put(storageName, cache);
+    System.out.println("Created cache storage: " + storageName + " (type: " + cacheType + ")");
+    return true;
   }
 
-  /**
-   * Получение entity кэш-хранилища
-   */
-  public CacheStorageEntity getCacheEntity(String storageToken) {
-    return cacheStorageDAO.findByName(storageToken);
+  public Cache getCache(String storageName) {
+    return activeCaches.get(storageName);
+  }
+
+  public CacheStorageEntity getCacheEntity(String storageName) {
+    return cacheStorageDAO.findByName(storageName);
   }
 
   /**
    * Проверка существования кэша
    */
-  public boolean cacheExists(String storageToken) {
-    return !activeCaches.containsKey(storageToken);
+  public boolean cacheExists(String storageName) {
+    return activeCaches.containsKey(storageName);
+  }
+
+  // ========== ДОБАВЛЯЕМ МЕТОДЫ ДЛЯ FileDistributor ==========
+
+  /**
+   * Положить значение в кэш
+   */
+  public void put(String storageName, Object key, Object value) {
+    Cache cache = getCache(storageName);
+    if (cache != null) {
+      cache.put(key, value);
+    } else {
+      System.err.println("Cache storage not found: " + storageName);
+    }
+  }
+
+  /**
+   * Получить значение из кэша
+   */
+  public Object get(String storageName, Object key) {
+    Cache cache = getCache(storageName);
+    return cache != null ? cache.get(key) : null;
+  }
+
+  /**
+   * Удалить значение из кэша
+   */
+  public void remove(String storageName, Object key) {
+    Cache cache = getCache(storageName);
+    if (cache != null) {
+      cache.remove(key);
+    }
+  }
+
+  /**
+   * Получить размер кэша
+   */
+  public int size(String storageName) {
+    Cache cache = getCache(storageName);
+    return cache != null ? cache.size() : 0;
+  }
+
+  /**
+   * Проверить наличие ключа в кэше
+   */
+  public boolean containsKey(String storageName, Object key) {
+    Cache cache = getCache(storageName);
+    return cache != null && cache.containsKey(key);
+  }
+
+  /**
+   * Очистить кэш
+   */
+  public void clear(String storageName) {
+    Cache cache = getCache(storageName);
+    if (cache != null) {
+      cache.clear();
+    }
   }
 }

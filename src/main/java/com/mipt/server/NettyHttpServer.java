@@ -12,6 +12,7 @@ import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
+import com.mipt.cache.FileDistributor;
 
 public class NettyHttpServer {
   private final int port;
@@ -19,17 +20,20 @@ public class NettyHttpServer {
   private final UserDAO userDAO;
   private final PermissionDAO permissionDAO;
   private final CacheStorageDAO cacheStorageDAO;
+  private final FileDistributor fileDistributor;
 
   public NettyHttpServer(int port,
       CacheStorageService cacheService,
       UserDAO userDAO,
       PermissionDAO permissionDAO,
-      CacheStorageDAO cacheStorageDAO) {
+      CacheStorageDAO cacheStorageDAO,
+      FileDistributor fileDistributor) {
     this.port = port;
     this.cacheService = cacheService;
     this.userDAO = userDAO;
     this.permissionDAO = permissionDAO;
     this.cacheStorageDAO = cacheStorageDAO;
+    this.fileDistributor = fileDistributor;
   }
 
   public void run() throws Exception {
@@ -48,7 +52,7 @@ public class NettyHttpServer {
 
               p.addLast(new HttpServerCodec());
               p.addLast(new HttpObjectAggregator(65536));
-              p.addLast(new NettyHandler(cacheService, userDAO, permissionDAO, cacheStorageDAO));
+              p.addLast(new NettyHandler(cacheService, userDAO, permissionDAO, cacheStorageDAO, fileDistributor));
             }
           })
           .option(ChannelOption.SO_BACKLOG, 128)

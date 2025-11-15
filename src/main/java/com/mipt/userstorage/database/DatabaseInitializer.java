@@ -14,6 +14,9 @@ public class DatabaseInitializer {
 
         "CREATE TABLE IF NOT EXISTS cache_storages (" +
             "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
+            "storage_name VARCHAR(100) NOT NULL, " +
+            "cache_type VARCHAR(50) NOT NULL, " +
+            "max_size INT, " +
             "storage_token VARCHAR(255) NOT NULL, ",
 
         "CREATE TABLE IF NOT EXISTS user_storage_permissions (" +
@@ -30,6 +33,12 @@ public class DatabaseInitializer {
         "DELETE FROM user_storage_permissions",
         "DELETE FROM cache_storages",
         "DELETE FROM users",
+
+        "INSERT INTO users (username, password_plain) VALUES ('admin', 'password')",
+        "INSERT INTO cache_storages (storage_name, cache_type, max_size, storage_token) VALUES " +
+        "('string_storage', 'CONCURRENT', NULL, 'string_token'), " +
+        "('json_storage', 'LRU', 1000, 'json_token'), " +
+        "('bytes_storage', 'LRU', 200, 'bytes_token')",
 
         "ALTER TABLE users ALTER COLUMN id RESTART WITH 1",
         "ALTER TABLE cache_storages ALTER COLUMN id RESTART WITH 1",
