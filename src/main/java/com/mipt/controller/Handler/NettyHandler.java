@@ -1,7 +1,7 @@
 package com.mipt.controller.Handler;
 
-import com.mipt.service.CacheStorageService;
-import com.mipt.userstorage.dao.*;
+import com.mipt.cache.CacheStorage;
+import com.mipt.userstorage.dao.UserDAO;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.FullHttpRequest;
@@ -15,12 +15,9 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   private final StorageRequestHandler storageHandler;
   private final InfoPageHandler infoHandler;
 
-  public NettyHandler(CacheStorageService cacheService,
-      UserDAO userDAO,
-      PermissionDAO permissionDAO,
-      CacheStorageDAO cacheStorageDAO) {
-    this.cacheHandler = new CacheRequestHandler(cacheService, userDAO);
-    this.storageHandler = new StorageRequestHandler(cacheService, userDAO);
+  public NettyHandler(CacheStorage cacheStorage, UserDAO userDAO) {
+    this.cacheHandler = new CacheRequestHandler(cacheStorage, userDAO);
+    this.storageHandler = new StorageRequestHandler(cacheStorage, userDAO);
     this.infoHandler = new InfoPageHandler();
   }
 

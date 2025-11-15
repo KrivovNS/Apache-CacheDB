@@ -1,11 +1,11 @@
 package com.mipt.controller.Handler;
 
-import com.mipt.cache.Cache;
+import com.mipt.cache.CacheResult;
+import com.mipt.cache.CacheStorage;
 import com.mipt.controller.DataType;
 import com.mipt.controller.DataTypeProcessor;
 import com.mipt.controller.RequestParametersValidator;
 import com.mipt.controller.ValidationResult;
-import com.mipt.service.CacheStorageService;
 import com.mipt.userstorage.dao.UserDAO;
 import com.mipt.userstorage.model.User;
 import io.netty.channel.ChannelHandlerContext;
@@ -15,13 +15,13 @@ import java.util.Map;
 
 public class CacheRequestHandler extends BaseNettyHandler {
 
-  private final CacheStorageService cacheService;
+  private final CacheStorage cacheStorage;
   private final UserDAO userDAO;
   private final RequestParametersValidator validator;
   private final DataTypeProcessor dataTypeProcessor;
 
-  public CacheRequestHandler(CacheStorageService cacheService, UserDAO userDAO) {
-    this.cacheService = cacheService;
+  public CacheRequestHandler(CacheStorage cacheStorage, UserDAO userDAO) {
+    this.cacheStorage = cacheStorage;
     this.userDAO = userDAO;
     this.validator = new RequestParametersValidator();
     this.dataTypeProcessor = new DataTypeProcessor();
@@ -35,15 +35,15 @@ public class CacheRequestHandler extends BaseNettyHandler {
     }
 
     Map<String, String> params = parseUri(uri);
-    String storageToken = params.get("storage_token");
-    String key = params.get("key");
     String type = params.get("type");
+    String key = params.get("key");
     String login = params.get("login");
     String password = params.get("password");
 
     if (!authenticateUser(login, password)) {
       return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid credentials");
     }
+
     if (("POST".equals(method) || "PUT".equals(method)) && (content == null || content.trim().isEmpty())) {
       return createResponse(HttpResponseStatus.BAD_REQUEST, "Request body is required for " + method + " operations");
     }
@@ -51,13 +51,13 @@ public class CacheRequestHandler extends BaseNettyHandler {
     try {
       switch (method) {
         case "GET":
-          return handleGet(storageToken, type, key);
+          return handleGet(type, key);
         case "POST":
-          return handlePost(storageToken, type, key, content);
+          return handlePost(type, key, content);
         case "PUT":
-          return handlePut(storageToken, type, key, content);
+          return handlePut(type, key, content);
         case "DELETE":
-          return handleDelete(storageToken, type, key);
+          return handleDelete(type, key);
         default:
           return createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED, "Method not allowed");
       }
@@ -67,44 +67,31 @@ public class CacheRequestHandler extends BaseNettyHandler {
     }
   }
 
-  private FullHttpResponse handleGet(String storageToken, String type, String key) {
-    if (!cacheService.storageExists(storageToken)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
-    }
-
+  private FullHttpResponse handleGet(String type, String key) {
     if (!DataType.isValid(type)) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
           "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
     }
 
-    Cache cache = cacheService.getCache(storageToken, type);
-    if (cache == null) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for type " + type + " not found");
+    CacheResult result = cacheStorage.read(type, key);
+    if (!result.isSuccess()) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, result.getMessage());
     }
 
-    Object value = cache.get(key);
-    if (value == null) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Key not found: " + key);
-    }
-
-    String responseData = dataTypeProcessor.formatDataForResponse(value, type);
+    String responseData = dataTypeProcessor.formatDataForResponse(result.getData(), type);
     return createResponse(HttpResponseStatus.OK, responseData);
   }
 
-  private FullHttpResponse handlePost(String storageToken, String type, String key, String value) {
-    return handleDataModification(storageToken, type, key, value, true);
+  private FullHttpResponse handlePost(String type, String key, String value) {
+    return handleDataModification(type, key, value, true);
   }
 
-  private FullHttpResponse handlePut(String storageToken, String type, String key, String value) {
-    return handleDataModification(storageToken, type, key, value, false);
+  private FullHttpResponse handlePut(String type, String key, String value) {
+    return handleDataModification(type, key, value, false);
   }
 
-  private FullHttpResponse handleDataModification(String storageToken, String type, String key,
+  private FullHttpResponse handleDataModification(String type, String key,
       String value, boolean checkExistence) {
-    if (!cacheService.storageExists(storageToken)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
-    }
-
     if (!DataType.isValid(type)) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
           "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
@@ -114,42 +101,37 @@ public class CacheRequestHandler extends BaseNettyHandler {
       return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type: " + type);
     }
 
-    Cache cache = cacheService.getCache(storageToken, type);
-    if (cache == null) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for type " + type + " not found");
-    }
-
-    if (checkExistence && cache.containsKey(key)) {
-      return createResponse(HttpResponseStatus.CONFLICT, "Key already exists: " + key);
-    }
-
     Object processedValue = dataTypeProcessor.processDataForStorage(value, type);
-    cache.put(key, processedValue);
+    CacheResult result;
+
+    if (checkExistence) {
+      result = cacheStorage.insert(type, key, processedValue);
+    } else {
+      result = cacheStorage.put(type, key, processedValue);
+    }
+
+    if (!result.isSuccess()) {
+      HttpResponseStatus status = checkExistence && result.getMessage().contains("already exists")
+          ? HttpResponseStatus.CONFLICT
+          : HttpResponseStatus.BAD_REQUEST;
+      return createResponse(status, result.getMessage());
+    }
 
     String message = checkExistence ? "inserted" : "updated";
     return createResponse(HttpResponseStatus.OK, "Value " + message + " successfully for key: " + key);
   }
 
-  private FullHttpResponse handleDelete(String storageToken, String type, String key) {
-    if (!cacheService.storageExists(storageToken)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
-    }
-
+  private FullHttpResponse handleDelete(String type, String key) {
     if (!DataType.isValid(type)) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
           "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
     }
 
-    Cache cache = cacheService.getCache(storageToken, type);
-    if (cache == null) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for type " + type + " not found");
+    CacheResult result = cacheStorage.delete(type, key);
+    if (!result.isSuccess()) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, result.getMessage());
     }
 
-    if (!cache.containsKey(key)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Key not found: " + key);
-    }
-
-    cache.remove(key);
     return createResponse(HttpResponseStatus.OK, "Key deleted successfully: " + key);
   }
 
