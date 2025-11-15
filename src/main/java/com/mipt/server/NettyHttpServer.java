@@ -1,6 +1,7 @@
 package com.mipt.server;
 
-import com.mipt.userstorage.service.CacheStorageService;
+import com.mipt.controller.NettyHandler;
+import com.mipt.service.CacheStorageService;
 import com.mipt.userstorage.dao.*;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
@@ -47,7 +48,7 @@ public class NettyHttpServer {
 
               p.addLast(new HttpServerCodec());
               p.addLast(new HttpObjectAggregator(65536));
-              p.addLast(new HttpRequestHandler(cacheService, userDAO, permissionDAO, cacheStorageDAO));
+              p.addLast(new NettyHandler(cacheService, userDAO, permissionDAO, cacheStorageDAO));
             }
           })
           .option(ChannelOption.SO_BACKLOG, 128)

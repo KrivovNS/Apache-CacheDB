@@ -1,8 +1,6 @@
-package com.mipt.userstorage.service;
+package com.mipt.service;
 
 import com.mipt.cache.Cache;
-import com.mipt.cache.SimpleCache;
-import com.mipt.cache.ConcurrentCache;
 import com.mipt.cache.LRUCache;
 import com.mipt.userstorage.dao.CacheStorageDAO;
 import com.mipt.userstorage.model.CacheStorageEntity;
@@ -32,47 +30,36 @@ public class CacheStorageService {
    * Создание кэша в памяти на основе entity из БД
    */
   public Cache createCacheInMemory(CacheStorageEntity entity) {
-    Cache cache = createCacheByType(entity);
-    activeCaches.put(entity.getStorageName(), cache);
-    System.out.println("Created cache: " + entity.getStorageName() + " (" + entity.getCacheType() + ")");
+    Cache cache = createCache();
+    activeCaches.put(entity.getStorageToken(), cache);
     return cache;
   }
 
   /**
    * Создание кэша по типу из entity
    */
-  private Cache createCacheByType(CacheStorageEntity entity) {
-    switch (entity.getCacheType().toUpperCase()) {
-      case "SIMPLE":
-        return new SimpleCache();
-      case "CONCURRENT":
-        return new ConcurrentCache();
-      case "LRU":
-        int maxSize = entity.getMaxSize() != null ? entity.getMaxSize() : 100;
-        return new LRUCache(maxSize);
-      default:
-        return new SimpleCache();
-    }
+  private Cache createCache() {
+    return new LRUCache(2024);
   }
 
   /**
    * Получение кэша по имени
    */
-  public Cache getCache(String storageName) {
-    return activeCaches.get(storageName);
+  public Cache getCache(String storageToken) {
+    return activeCaches.get(storageToken);
   }
 
   /**
    * Получение entity кэш-хранилища
    */
-  public CacheStorageEntity getCacheEntity(String storageName) {
-    return cacheStorageDAO.findByName(storageName);
+  public CacheStorageEntity getCacheEntity(String storageToken) {
+    return cacheStorageDAO.findByName(storageToken);
   }
 
   /**
    * Проверка существования кэша
    */
-  public boolean cacheExists(String storageName) {
-    return activeCaches.containsKey(storageName);
+  public boolean cacheExists(String storageToken) {
+    return !activeCaches.containsKey(storageToken);
   }
 }
