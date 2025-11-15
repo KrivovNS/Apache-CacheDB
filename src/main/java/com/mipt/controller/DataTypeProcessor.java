@@ -1,4 +1,4 @@
-package com.mipt.controller.DataType;
+package com.mipt.controller;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;

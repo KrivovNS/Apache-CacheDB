@@ -1,8 +1,8 @@
 package com.mipt.controller.Handler;
 
 import com.mipt.cache.Cache;
-import com.mipt.controller.DataType.DataType;
-import com.mipt.controller.DataType.DataTypeProcessor;
+import com.mipt.controller.DataType;
+import com.mipt.controller.DataTypeProcessor;
 import com.mipt.controller.RequestParametersValidator;
 import com.mipt.controller.ValidationResult;
 import com.mipt.service.CacheStorageService;

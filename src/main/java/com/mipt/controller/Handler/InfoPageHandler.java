@@ -1,6 +1,6 @@
 package com.mipt.controller.Handler;
 
-import com.mipt.controller.DataType.DataType;
+import com.mipt.controller.DataType;
 import com.mipt.controller.UserRole;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.FullHttpResponse;

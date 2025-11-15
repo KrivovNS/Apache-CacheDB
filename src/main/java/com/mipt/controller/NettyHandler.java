@@ -1,3 +1,4 @@
+// NettyHandler.java - ПОЛНОСТЬЮ НОВАЯ ВЕРСИЯ
 package com.mipt.controller;
 
 import com.mipt.cache.Cache;
@@ -99,13 +100,16 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       return createResponse(HttpResponseStatus.UNAUTHORIZED, "User not found: " + username);
     }
 
-    // Проверка существования хранилища
-    if (cacheService.cacheExists(storageName)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
+    // ИСПРАВЛЕНО: используем storageExists
+    if (!cacheService.storageExists(storageName)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageName);
     }
 
-    // Получаем кэш
-    Cache cache = cacheService.getCache(storageName);
+    // ИСПРАВЛЕНО: передаем тип данных
+    Cache cache = cacheService.getCache(storageName, "string");
+    if (cache == null) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for storage not found: " + storageName);
+    }
 
     // Получаем значение
     Object value = cache.get(key);
@@ -128,13 +132,16 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       return createResponse(HttpResponseStatus.UNAUTHORIZED, "User not found: " + username);
     }
 
-    // Проверка существования хранилища
-    if (cacheService.cacheExists(storageName)) {
+    // ИСПРАВЛЕНО: используем storageExists
+    if (!cacheService.storageExists(storageName)) {
       return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
     }
 
-    // Получаем кэш
-    Cache cache = cacheService.getCache(storageName);
+    // ИСПРАВЛЕНО: передаем тип данных
+    Cache cache = cacheService.getCache(storageName, "string");
+    if (cache == null) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for storage not found: " + storageName);
+    }
 
     // Сохраняем значение
     cache.put(key, value);
@@ -154,13 +161,16 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       return createResponse(HttpResponseStatus.UNAUTHORIZED, "User not found: " + username);
     }
 
-    // Проверка существования хранилища
-    if (cacheService.cacheExists(storageName)) {
+    // ИСПРАВЛЕНО: используем storageExists
+    if (!cacheService.storageExists(storageName)) {
       return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
     }
 
-    // Получаем кэш
-    Cache cache = cacheService.getCache(storageName);
+    // ИСПРАВЛЕНО: передаем тип данных
+    Cache cache = cacheService.getCache(storageName, "string");
+    if (cache == null) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for storage not found: " + storageName);
+    }
 
     // Удаляем значение
     cache.remove(key);
@@ -178,11 +188,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         "curl \"http://localhost:8080/cache?storage=session_cache&key=test&user=admin\"";
 
     FullHttpResponse response = createResponse(HttpResponseStatus.OK, info);
-    ctx.writeAndFlush(response);
-  }
-
-  private void sendNoContent(ChannelHandlerContext ctx) {
-    FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.NO_CONTENT);
     ctx.writeAndFlush(response);
   }
 
