@@ -10,43 +10,38 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class CacheStorageService {
   private final CacheStorageDAO cacheStorageDAO;
-  private final Map<String, Cache> activeCaches;
+  private final Map<String, Map<String, Cache>> storageCaches; // storageToken -> (type -> cache)
 
   public CacheStorageService(CacheStorageDAO cacheStorageDAO) {
     this.cacheStorageDAO = cacheStorageDAO;
-    this.activeCaches = new ConcurrentHashMap<>();
+    this.storageCaches = new ConcurrentHashMap<>();
     initializeCaches();
   }
 
   private void initializeCaches() {
     for (CacheStorageEntity entity : cacheStorageDAO.findAll()) {
-      createCacheInMemory(entity);
+      createStorageCaches(entity.getStorageToken());
     }
   }
 
-  public Cache createCacheInMemory(CacheStorageEntity entity) {
-    Cache cache = new LRUCache(2024);
-    activeCaches.put(entity.getStorageToken(), cache);
-    return cache;
+  private void createStorageCaches(String storageToken) {
+    Map<String, Cache> typeCaches = new ConcurrentHashMap<>();
+    typeCaches.put("json", new LRUCache(1000));
+    typeCaches.put("byte[]", new LRUCache(1000));
+    typeCaches.put("string", new LRUCache(1000));
+    storageCaches.put(storageToken, typeCaches);
   }
 
-  public Cache getCache(String storageToken) {
-    return activeCaches.get(storageToken);
-  }
-
-  public CacheStorageEntity getCacheEntity(String storageToken) {
-    return cacheStorageDAO.findByName(storageToken);
-  }
-
-  public boolean cacheExists(String storageToken) {
-    return activeCaches.containsKey(storageToken);
-  }
-
-  public CacheResult read(String storageToken, String key, String type) {
+  public CacheResult readData(String storageToken, String dataType, String key) {
     try {
-      Cache cache = activeCaches.get(storageToken);
+      Map<String, Cache> typeCaches = storageCaches.get(storageToken);
+      if (typeCaches == null) {
+        return CacheResult.error("Storage " + storageToken + " not found");
+      }
+
+      Cache cache = typeCaches.get(dataType.toLowerCase());
       if (cache == null) {
-        return CacheResult.error("Cache with token " + storageToken + " not found");
+        return CacheResult.error("Data type " + dataType + " not supported");
       }
 
       Object value = cache.get(key);
@@ -56,57 +51,62 @@ public class CacheStorageService {
 
       return CacheResult.success(value);
     } catch (Exception e) {
-      return CacheResult.error("Error reading cache: " + e.getMessage());
+      return CacheResult.error("Error reading data: " + e.getMessage());
     }
   }
 
-  public CacheResult insert(String storageToken, String key, String type, String value) {
+  public CacheResult insertData(String storageToken, String dataType, String key, String value) {
     try {
-      Cache cache = activeCaches.get(storageToken);
+      Map<String, Cache> typeCaches = storageCaches.get(storageToken);
+      if (typeCaches == null) {
+        return CacheResult.error("Storage " + storageToken + " not found");
+      }
+
+      Cache cache = typeCaches.get(dataType.toLowerCase());
       if (cache == null) {
-        return CacheResult.error("Cache with token " + storageToken + " not found");
+        return CacheResult.error("Data type " + dataType + " not supported");
       }
 
       if (cache.containsKey(key)) {
         return CacheResult.error("Key " + key + " already exists");
       }
 
-      Object typedValue = convertValue(type, value);
-      if (typedValue == null) {
-        return CacheResult.error("Unsupported data type: " + type);
-      }
-
-      cache.put(key, typedValue);
-      return CacheResult.success("Inserted successfully");
+      cache.put(key, value);
+      return CacheResult.success("Data inserted successfully");
     } catch (Exception e) {
-      return CacheResult.error("Error inserting cache: " + e.getMessage());
+      return CacheResult.error("Error inserting data: " + e.getMessage());
     }
   }
 
-  public CacheResult put(String storageToken, String key, String type, String value) {
+  public CacheResult updateData(String storageToken, String dataType, String key, String value) {
     try {
-      Cache cache = activeCaches.get(storageToken);
+      Map<String, Cache> typeCaches = storageCaches.get(storageToken);
+      if (typeCaches == null) {
+        return CacheResult.error("Storage " + storageToken + " not found");
+      }
+
+      Cache cache = typeCaches.get(dataType.toLowerCase());
       if (cache == null) {
-        return CacheResult.error("Cache with token " + storageToken + " not found");
+        return CacheResult.error("Data type " + dataType + " not supported");
       }
 
-      Object typedValue = convertValue(type, value);
-      if (typedValue == null) {
-        return CacheResult.error("Unsupported data type: " + type);
-      }
-
-      cache.put(key, typedValue);
-      return CacheResult.success("Put successfully");
+      cache.put(key, value);
+      return CacheResult.success("Data updated successfully");
     } catch (Exception e) {
-      return CacheResult.error("Error putting cache: " + e.getMessage());
+      return CacheResult.error("Error updating data: " + e.getMessage());
     }
   }
 
-  public CacheResult delete(String storageToken, String key, String type) {
+  public CacheResult deleteData(String storageToken, String dataType, String key) {
     try {
-      Cache cache = activeCaches.get(storageToken);
+      Map<String, Cache> typeCaches = storageCaches.get(storageToken);
+      if (typeCaches == null) {
+        return CacheResult.error("Storage " + storageToken + " not found");
+      }
+
+      Cache cache = typeCaches.get(dataType.toLowerCase());
       if (cache == null) {
-        return CacheResult.error("Cache with token " + storageToken + " not found");
+        return CacheResult.error("Data type " + dataType + " not supported");
       }
 
       if (!cache.containsKey(key)) {
@@ -114,34 +114,18 @@ public class CacheStorageService {
       }
 
       cache.remove(key);
-      return CacheResult.success("Deleted successfully");
+      return CacheResult.success("Data deleted successfully");
     } catch (Exception e) {
-      return CacheResult.error("Error deleting cache: " + e.getMessage());
+      return CacheResult.error("Error deleting data: " + e.getMessage());
     }
   }
 
-  private Object convertValue(String type, String value) {
-    try {
-      switch (type.toLowerCase()) {
-        case "string":
-          return value;
-        case "integer":
-        case "int":
-          return Integer.parseInt(value);
-        case "long":
-          return Long.parseLong(value);
-        case "double":
-          return Double.parseDouble(value);
-        case "float":
-          return Float.parseFloat(value);
-        case "boolean":
-        case "bool":
-          return Boolean.parseBoolean(value);
-        default:
-          return null;
-      }
-    } catch (NumberFormatException e) {
-      return null;
-    }
+  public boolean storageExists(String storageToken) {
+    return storageCaches.containsKey(storageToken);
+  }
+
+  public Cache getCache(String storageToken, String dataType) {
+    Map<String, Cache> typeCaches = storageCaches.get(storageToken);
+    return typeCaches != null ? typeCaches.get(dataType.toLowerCase()) : null;
   }
 }
