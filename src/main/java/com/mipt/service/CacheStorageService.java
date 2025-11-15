@@ -7,6 +7,8 @@ import com.mipt.userstorage.dao.CacheStorageDAO;
 import com.mipt.userstorage.model.CacheStorageEntity;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.security.SecureRandom;
+import java.util.Base64;
 
 public class CacheStorageService {
   private final CacheStorageDAO cacheStorageDAO;
@@ -33,14 +35,16 @@ public class CacheStorageService {
     return storageToken;
   }
 
-  // Дополнительный метод для создания с автогенерацией токена
-  public String createStorageCaches() {
-    String storageToken = generateStorageToken();
+  public String createNewStorage() {
+    String storageToken = generateSecureToken();
     return createStorageCaches(storageToken);
   }
 
-  private String generateStorageToken() {
-    return "storage_" + System.currentTimeMillis() + "_" + (int)(Math.random() * 1000);
+  private String generateSecureToken() {
+    SecureRandom secureRandom = new SecureRandom();
+    byte[] tokenBytes = new byte[32];
+    secureRandom.nextBytes(tokenBytes);
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
   }
 
 
