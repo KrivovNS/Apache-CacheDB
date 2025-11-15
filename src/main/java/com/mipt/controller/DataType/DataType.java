@@ -15,7 +15,6 @@ public enum DataType {
     return value;
   }
 
-  // Преобразование из строки в enum
   public static DataType fromString(String value) {
     if (value == null) return null;
 
@@ -27,12 +26,10 @@ public enum DataType {
     return null;
   }
 
-  // Проверка существования типа
   public static boolean isValid(String value) {
     return fromString(value) != null;
   }
 
-  // Получение всех допустимых значений
   public static String[] getAllValues() {
     DataType[] types = values();
     String[] result = new String[types.length];
