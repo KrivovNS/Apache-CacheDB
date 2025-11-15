@@ -1,7 +1,7 @@
-package com.mipt.server;
+package com.mipt.controller;
 
 import com.mipt.cache.Cache;
-import com.mipt.userstorage.service.CacheStorageService;
+import com.mipt.service.CacheStorageService;
 import com.mipt.userstorage.dao.*;
 import com.mipt.userstorage.model.User;
 import io.netty.buffer.ByteBuf;
@@ -15,14 +15,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
-public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
+public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
   private final CacheStorageService cacheService;
   private final UserDAO userDAO;
   private final PermissionDAO permissionDAO;
   private final CacheStorageDAO cacheStorageDAO;
 
-  public HttpRequestHandler(CacheStorageService cacheService,
+  public NettyHandler(CacheStorageService cacheService,
       UserDAO userDAO,
       PermissionDAO permissionDAO,
       CacheStorageDAO cacheStorageDAO) {
@@ -100,7 +100,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
     }
 
     // Проверка существования хранилища
-    if (!cacheService.cacheExists(storageName)) {
+    if (cacheService.cacheExists(storageName)) {
       return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
     }
 
@@ -129,7 +129,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
     }
 
     // Проверка существования хранилища
-    if (!cacheService.cacheExists(storageName)) {
+    if (cacheService.cacheExists(storageName)) {
       return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
     }
 
@@ -155,7 +155,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
     }
 
     // Проверка существования хранилища
-    if (!cacheService.cacheExists(storageName)) {
+    if (cacheService.cacheExists(storageName)) {
       return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
     }
 

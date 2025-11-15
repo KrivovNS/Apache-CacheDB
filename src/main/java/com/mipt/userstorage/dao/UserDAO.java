@@ -3,33 +3,8 @@ package com.mipt.userstorage.dao;
 import com.mipt.userstorage.database.DatabaseConnection;
 import com.mipt.userstorage.model.User;
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.List;
 
 public class UserDAO {
-
-  public List<User> findAll() {
-    List<User> users = new ArrayList<>();
-    String sql = "SELECT * FROM users";
-
-    try (Connection conn = DatabaseConnection.getConnection();
-        Statement stmt = conn.createStatement();
-        ResultSet rs = stmt.executeQuery(sql)) {
-
-      while (rs.next()) {
-        User user = new User();
-        user.setId(rs.getLong("id"));
-        user.setUsername(rs.getString("username"));
-        user.setPasswordPlain(rs.getString("password_plain"));
-        users.add(user);
-      }
-
-    } catch (SQLException e) {
-      e.printStackTrace();
-    }
-
-    return users;
-  }
 
   public User findByUsername(String username) {
     String sql = "SELECT * FROM users WHERE username = ?";
