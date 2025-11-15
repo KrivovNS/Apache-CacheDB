@@ -5,13 +5,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-public class RequestsValidator {
+public class RequestParametersValidator {
 
   // Константы максимальных длин
   private static final int MAX_TOKEN_LENGTH = 255;
   private static final int MAX_PASSWORD_LENGTH = 255;
   private static final int MAX_KEY_LENGTH = 255;
-  private static final int MAX_VALUE_LENGTH = 5000;
   private static final int MAX_LOGIN_LENGTH = 50;
   private static final int MAX_ADDED_USER_LENGTH = 50;
 
@@ -21,11 +20,7 @@ public class RequestsValidator {
   );
 
   private static final Set<String> POST_CACHE_PARAMS = Set.of(
-      "key", "type", "value", "login", "password", "storage_token"
-  );
-
-  private static final Set<String> PUT_CACHE_PARAMS = Set.of(
-      "key", "type", "value", "login", "password", "storage_token"
+      "key", "type", "login", "password", "storage_token"
   );
 
   private static final Set<String> DELETE_CACHE_PARAMS = Set.of(
@@ -86,7 +81,6 @@ public class RequestsValidator {
 
     // Обязательные параметры
     validateRequiredParam(result, params, "key");
-    validateRequiredParam(result, params, "value");
     validateRequiredParam(result, params, "login");
     validateRequiredParam(result, params, "password");
     validateRequiredParam(result, params, "storage_token");
@@ -96,7 +90,6 @@ public class RequestsValidator {
 
     // Проверка длины параметров
     validateStringLength(result, getFirstParam(params, "key"), "key", 1, MAX_KEY_LENGTH);
-    validateStringLength(result, getFirstParam(params, "value"), "value", 1, MAX_VALUE_LENGTH);
     validateStringLength(result, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
     validateStringLength(result, getFirstParam(params, "password"), "password", 6, MAX_PASSWORD_LENGTH);
     validateStringLength(result, getFirstParam(params, "storage_token"), "storage_token", 10, MAX_TOKEN_LENGTH);
@@ -105,7 +98,7 @@ public class RequestsValidator {
   }
 
   public ValidationResult validatePutCacheRequest(String uri) {
-    // PUT имеет те же параметры что и POST
+    // PUT имеет те же параметры, что и POST
     return validatePostCacheRequest(uri);
   }
 
@@ -196,10 +189,10 @@ public class RequestsValidator {
     validateStringLength(result, getFirstParam(params, "addeduser"), "addeduser", 3, MAX_ADDED_USER_LENGTH);
     validateStringLength(result, getFirstParam(params, "storage_token"), "storage_token", 10, MAX_TOKEN_LENGTH);
 
-    // Проверка что не добавляем самого себя
+    // Проверка что, не добавляем самого себя
     String login = getFirstParam(params, "login");
     String addedUser = getFirstParam(params, "addeduser");
-    if (login != null && addedUser != null && login.equals(addedUser)) {
+    if (login != null && login.equals(addedUser)) {
       result.addError("Cannot add yourself to storage");
     }
 
