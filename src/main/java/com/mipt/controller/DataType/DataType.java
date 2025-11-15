@@ -1,4 +1,4 @@
-package com.mipt.controller;
+package com.mipt.controller.DataType;
 
 public enum DataType {
   STRING("string"),
