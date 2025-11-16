@@ -1,6 +1,8 @@
 package com.mipt.controller;
 
 import io.netty.handler.codec.http.QueryStringDecoder;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -23,6 +25,10 @@ public class RequestParametersValidator {
       "key", "type", "login", "password", "storage_token"
   );
 
+  private static final Set<String> PUT_CACHE_PARAMS = Set.of(
+      "key", "type", "login", "password", "storage_token"
+  );
+
   private static final Set<String> DELETE_CACHE_PARAMS = Set.of(
       "key", "type", "login", "password", "storage_token"
   );
@@ -35,189 +41,187 @@ public class RequestParametersValidator {
       "login", "password", "addeduser", "role", "storage_token"
   );
 
-  // Основные методы валидации
+  // Основной метод валидации для NettyHandler
+  public ValidationResult validateRequest(String method, String uri) {
+    List<String> errors = new ArrayList<>();
 
-  public ValidationResult validateGetCacheRequest(String uri) {
-    QueryStringDecoder decoder = new QueryStringDecoder(uri);
-    Map<String, List<String>> params = decoder.parameters();
+    if (uri.startsWith("/cache")) {
+      validateCacheRequest(method, uri, errors);
+    } else if (uri.startsWith("/storage")) {
+      validateStorageRequest(method, uri, errors);
+    }
 
-    ValidationResult result = new ValidationResult();
+    return new ValidationResult(errors.isEmpty(), errors);
+  }
+
+  private void validateCacheRequest(String method, String uri, List<String> errors) {
+    Map<String, List<String>> params = parseUriParameters(uri);
+
+    // Проверка метода
+    if (!isValidCacheMethod(method)) {
+      errors.add("Invalid method for cache endpoint: " + method);
+      return;
+    }
+
+    // Определяем допустимые параметры в зависимости от метода
+    Set<String> allowedParams = getAllowedCacheParams(method);
 
     // Проверка на лишние параметры
-    validateNoExtraParams(result, params, GET_CACHE_PARAMS, "GET cache");
+    validateNoExtraParams(errors, params, allowedParams, method + " cache");
 
     // Проверка на единственность значений
-    validateSingleValueParams(result, params, GET_CACHE_PARAMS);
+    validateSingleValueParams(errors, params, allowedParams);
 
     // Обязательные параметры
-    validateRequiredParam(result, params, "key");
-    validateRequiredParam(result, params, "login");
-    validateRequiredParam(result, params, "password");
-    validateRequiredParam(result, params, "storage_token");
+    validateRequiredParam(errors, params, "key");
+    validateRequiredParam(errors, params, "login");
+    validateRequiredParam(errors, params, "password");
+    validateRequiredParam(errors, params, "storage_token");
+    validateRequiredParam(errors, params, "type");
 
     // Проверка типа данных
-    validateDataType(result, params);
+    if (params.containsKey("type")) {
+      String type = getFirstParam(params, "type");
+      if (!DataType.isValid(type)) {
+        errors.add("Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
+      }
+    }
 
     // Проверка длины параметров
-    validateStringLength(result, getFirstParam(params, "key"), "key", 1, MAX_KEY_LENGTH);
-    validateStringLength(result, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
-    validateStringLength(result, getFirstParam(params, "password"), "password", 6, MAX_PASSWORD_LENGTH);
-    validateStringLength(result, getFirstParam(params, "storage_token"), "storage_token", 10, MAX_TOKEN_LENGTH);
-
-    return result;
+    validateStringLength(errors, getFirstParam(params, "key"), "key", 1, MAX_KEY_LENGTH);
+    validateStringLength(errors, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
+    validateStringLength(errors, getFirstParam(params, "password"), "password", 6, MAX_PASSWORD_LENGTH);
+    validateStringLength(errors, getFirstParam(params, "storage_token"), "storage_token", 10, MAX_TOKEN_LENGTH);
   }
 
-  public ValidationResult validatePostCacheRequest(String uri) {
-    QueryStringDecoder decoder = new QueryStringDecoder(uri);
-    Map<String, List<String>> params = decoder.parameters();
+  private void validateStorageRequest(String method, String uri, List<String> errors) {
+    Map<String, List<String>> params = parseUriParameters(uri);
 
-    ValidationResult result = new ValidationResult();
+    Set<String> allowedParams;
+    switch (method.toUpperCase()) {
+      case "POST":
+        allowedParams = CREATE_STORAGE_PARAMS;
+        break;
+      case "PUT":
+        allowedParams = ADD_USER_PARAMS;
+        break;
+      default:
+        errors.add("Unsupported method for storage endpoint: " + method);
+        return;
+    }
 
     // Проверка на лишние параметры
-    validateNoExtraParams(result, params, POST_CACHE_PARAMS, "POST cache");
+    validateNoExtraParams(errors, params, allowedParams, method + " storage");
 
     // Проверка на единственность значений
-    validateSingleValueParams(result, params, POST_CACHE_PARAMS);
+    validateSingleValueParams(errors, params, allowedParams);
 
     // Обязательные параметры
-    validateRequiredParam(result, params, "key");
-    validateRequiredParam(result, params, "login");
-    validateRequiredParam(result, params, "password");
-    validateRequiredParam(result, params, "storage_token");
+    validateRequiredParam(errors, params, "login");
+    validateRequiredParam(errors, params, "password");
 
-    // Проверка типа данных
-    validateDataType(result, params);
+    if ("PUT".equals(method)) {
+      validateRequiredParam(errors, params, "addeduser");
+      validateRequiredParam(errors, params, "role");
+      validateRequiredParam(errors, params, "storage_token");
+
+      // Проверка роли
+      if (params.containsKey("role")) {
+        String role = getFirstParam(params, "role");
+        if (!UserRole.isValid(role)) {
+          errors.add("Invalid role. Allowed: " + String.join(", ", UserRole.getAllValues()));
+        }
+      }
+
+      // Проверка длины параметров
+      validateStringLength(errors, getFirstParam(params, "addeduser"), "addeduser", 3, MAX_ADDED_USER_LENGTH);
+      validateStringLength(errors, getFirstParam(params, "storage_token"), "storage_token", 10, MAX_TOKEN_LENGTH);
+
+      // Проверка что не добавляем самого себя
+      String login = getFirstParam(params, "login");
+      String addedUser = getFirstParam(params, "addeduser");
+      if (login != null && login.equals(addedUser)) {
+        errors.add("Cannot add yourself to storage");
+      }
+    }
 
     // Проверка длины параметров
-    validateStringLength(result, getFirstParam(params, "key"), "key", 1, MAX_KEY_LENGTH);
-    validateStringLength(result, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
-    validateStringLength(result, getFirstParam(params, "password"), "password", 6, MAX_PASSWORD_LENGTH);
-    validateStringLength(result, getFirstParam(params, "storage_token"), "storage_token", 10, MAX_TOKEN_LENGTH);
-
-    return result;
-  }
-
-  public ValidationResult validatePutCacheRequest(String uri) {
-    // PUT имеет те же параметры, что и POST
-    return validatePostCacheRequest(uri);
-  }
-
-  public ValidationResult validateDeleteCacheRequest(String uri) {
-    QueryStringDecoder decoder = new QueryStringDecoder(uri);
-    Map<String, List<String>> params = decoder.parameters();
-
-    ValidationResult result = new ValidationResult();
-
-    // Проверка на лишние параметры
-    validateNoExtraParams(result, params, DELETE_CACHE_PARAMS, "DELETE cache");
-
-    // Проверка на единственность значений
-    validateSingleValueParams(result, params, DELETE_CACHE_PARAMS);
-
-    // Обязательные параметры
-    validateRequiredParam(result, params, "key");
-    validateRequiredParam(result, params, "login");
-    validateRequiredParam(result, params, "password");
-    validateRequiredParam(result, params, "storage_token");
-
-    // Проверка типа данных
-    validateDataType(result, params);
-
-    // Проверка длины параметров
-    validateStringLength(result, getFirstParam(params, "key"), "key", 1, MAX_KEY_LENGTH);
-    validateStringLength(result, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
-    validateStringLength(result, getFirstParam(params, "password"), "password", 6, MAX_PASSWORD_LENGTH);
-    validateStringLength(result, getFirstParam(params, "storage_token"), "storage_token", 10, MAX_TOKEN_LENGTH);
-
-    return result;
-  }
-
-  public ValidationResult validateCreateStorageRequest(String uri) {
-    QueryStringDecoder decoder = new QueryStringDecoder(uri);
-    Map<String, List<String>> params = decoder.parameters();
-
-    ValidationResult result = new ValidationResult();
-
-    // Проверка на лишние параметры
-    validateNoExtraParams(result, params, CREATE_STORAGE_PARAMS, "Create storage");
-
-    // Проверка на единственность значений
-    validateSingleValueParams(result, params, CREATE_STORAGE_PARAMS);
-
-    // Обязательные параметры
-    validateRequiredParam(result, params, "login");
-    validateRequiredParam(result, params, "password");
-
-    // Проверка длины и формата параметров
-    validateStringLength(result, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
-    validateStringLength(result, getFirstParam(params, "password"), "password", 6, MAX_PASSWORD_LENGTH);
+    validateStringLength(errors, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
+    validateStringLength(errors, getFirstParam(params, "password"), "password", 6, MAX_PASSWORD_LENGTH);
 
     // Дополнительная проверка логина
     String login = getFirstParam(params, "login");
     if (login != null && !login.matches("^[a-zA-Z0-9_]+$")) {
-      result.addError("Login can only contain letters, numbers and underscores");
+      errors.add("Login can only contain letters, numbers and underscores");
+    }
+  }
+
+  // Специализированные методы для более детальной валидации
+
+  public ValidationResult validateGetCacheRequest(String uri) {
+    return validateCacheRequestByMethod("GET", uri);
+  }
+
+  public ValidationResult validatePostCacheRequest(String uri) {
+    return validateCacheRequestByMethod("POST", uri);
+  }
+
+  public ValidationResult validatePutCacheRequest(String uri) {
+    return validateCacheRequestByMethod("PUT", uri);
+  }
+
+  public ValidationResult validateDeleteCacheRequest(String uri) {
+    return validateCacheRequestByMethod("DELETE", uri);
+  }
+
+  public ValidationResult validateCreateStorageRequest(String uri) {
+    List<String> errors = new ArrayList<>();
+    Map<String, List<String>> params = parseUriParameters(uri);
+
+    validateNoExtraParams(errors, params, CREATE_STORAGE_PARAMS, "Create storage");
+    validateSingleValueParams(errors, params, CREATE_STORAGE_PARAMS);
+    validateRequiredParam(errors, params, "login");
+    validateRequiredParam(errors, params, "password");
+    validateStringLength(errors, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
+    validateStringLength(errors, getFirstParam(params, "password"), "password", 6, MAX_PASSWORD_LENGTH);
+
+    String login = getFirstParam(params, "login");
+    if (login != null && !login.matches("^[a-zA-Z0-9_]+$")) {
+      errors.add("Login can only contain letters, numbers and underscores");
     }
 
-    return result;
+    return new ValidationResult(errors.isEmpty(), errors);
   }
 
   public ValidationResult validateAddUserInStorage(String uri) {
-    QueryStringDecoder decoder = new QueryStringDecoder(uri);
-    Map<String, List<String>> params = decoder.parameters();
+    List<String> errors = new ArrayList<>();
+    Map<String, List<String>> params = parseUriParameters(uri);
 
-    ValidationResult result = new ValidationResult();
+    validateNoExtraParams(errors, params, ADD_USER_PARAMS, "Add user to storage");
+    validateSingleValueParams(errors, params, ADD_USER_PARAMS);
+    validateRequiredParam(errors, params, "login");
+    validateRequiredParam(errors, params, "password");
+    validateRequiredParam(errors, params, "addeduser");
+    validateRequiredParam(errors, params, "role");
+    validateRequiredParam(errors, params, "storage_token");
 
-    // Проверка на лишние параметры
-    validateNoExtraParams(result, params, ADD_USER_PARAMS, "Add user to storage");
+    validateUserRole(errors, params);
+    validateStringLength(errors, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
+    validateStringLength(errors, getFirstParam(params, "password"), "password", 6, MAX_PASSWORD_LENGTH);
+    validateStringLength(errors, getFirstParam(params, "addeduser"), "addeduser", 3, MAX_ADDED_USER_LENGTH);
+    validateStringLength(errors, getFirstParam(params, "storage_token"), "storage_token", 10, MAX_TOKEN_LENGTH);
 
-    // Проверка на единственность значений
-    validateSingleValueParams(result, params, ADD_USER_PARAMS);
-
-    // Обязательные параметры
-    validateRequiredParam(result, params, "login");
-    validateRequiredParam(result, params, "password");
-    validateRequiredParam(result, params, "addeduser");
-    validateRequiredParam(result, params, "role");
-    validateRequiredParam(result, params, "storage_token");
-
-    // Проверка роли
-    validateUserRole(result, params);
-
-    // Проверка длины параметров
-    validateStringLength(result, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
-    validateStringLength(result, getFirstParam(params, "password"), "password", 6, MAX_PASSWORD_LENGTH);
-    validateStringLength(result, getFirstParam(params, "addeduser"), "addeduser", 3, MAX_ADDED_USER_LENGTH);
-    validateStringLength(result, getFirstParam(params, "storage_token"), "storage_token", 10, MAX_TOKEN_LENGTH);
-
-    // Проверка что, не добавляем самого себя
     String login = getFirstParam(params, "login");
     String addedUser = getFirstParam(params, "addeduser");
     if (login != null && login.equals(addedUser)) {
-      result.addError("Cannot add yourself to storage");
+      errors.add("Cannot add yourself to storage");
     }
 
-    return result;
-  }
-
-  // Универсальный метод для валидации по HTTP методу
-  public ValidationResult validateRequest(String method, String uri) {
-    switch (method.toUpperCase()) {
-      case "GET":
-        return validateGetCacheRequest(uri);
-      case "POST":
-        return validatePostCacheRequest(uri);
-      case "PUT":
-        return validatePutCacheRequest(uri);
-      case "DELETE":
-        return validateDeleteCacheRequest(uri);
-      default:
-        ValidationResult result = new ValidationResult();
-        result.addError("Unsupported HTTP method: " + method);
-        return result;
-    }
+    return new ValidationResult(errors.isEmpty(), errors);
   }
 
   // Вспомогательные методы для извлечения параметров
+
   public Map<String, List<String>> parseUriParameters(String uri) {
     QueryStringDecoder decoder = new QueryStringDecoder(uri);
     return decoder.parameters();
@@ -230,44 +234,47 @@ public class RequestParametersValidator {
 
   // Приватные вспомогательные методы
 
-  private void validateDataType(ValidationResult result, Map<String, List<String>> params) {
-    if (params.containsKey("type")) {
-      String type = getFirstParam(params, "type");
-      if (!DataType.isValid(type)) {
-        result.addError("Invalid type. Allowed: " + String.join(", ", DataType.getAllValues()));
-      }
+  private ValidationResult validateCacheRequestByMethod(String method, String uri) {
+    List<String> errors = new ArrayList<>();
+    validateCacheRequest(method, uri, errors);
+    return new ValidationResult(errors.isEmpty(), errors);
+  }
+
+  private Set<String> getAllowedCacheParams(String method) {
+    switch (method.toUpperCase()) {
+      case "GET": return GET_CACHE_PARAMS;
+      case "POST": return POST_CACHE_PARAMS;
+      case "PUT": return PUT_CACHE_PARAMS;
+      case "DELETE": return DELETE_CACHE_PARAMS;
+      default: return Set.of();
     }
   }
 
-  private void validateUserRole(ValidationResult result, Map<String, List<String>> params) {
-    if (params.containsKey("role")) {
-      String role = getFirstParam(params, "role");
-      if (!UserRole.isValid(role)) {
-        result.addError("Invalid role. Allowed: " + String.join(", ", UserRole.getAllValues()));
-      }
-    }
+  private boolean isValidCacheMethod(String method) {
+    return "GET".equals(method) || "POST".equals(method) ||
+        "PUT".equals(method) || "DELETE".equals(method);
   }
 
-  private void validateNoExtraParams(ValidationResult result,
+  private void validateNoExtraParams(List<String> errors,
       Map<String, List<String>> params,
       Set<String> allowedParams,
       String endpointName) {
     for (String paramName : params.keySet()) {
       if (!allowedParams.contains(paramName)) {
-        result.addError("Unexpected parameter '" + paramName + "' for " + endpointName +
+        errors.add("Unexpected parameter '" + paramName + "' for " + endpointName +
             ". Allowed parameters: " + String.join(", ", allowedParams));
       }
     }
   }
 
-  private void validateSingleValueParams(ValidationResult result,
+  private void validateSingleValueParams(List<String> errors,
       Map<String, List<String>> params,
       Set<String> paramNames) {
     for (String paramName : paramNames) {
       if (params.containsKey(paramName)) {
         List<String> values = params.get(paramName);
         if (values != null && values.size() > 1) {
-          result.addError("Parameter '" + paramName + "' should have only one value, but got " + values.size());
+          errors.add("Parameter '" + paramName + "' should have only one value, but got " + values.size());
         }
       }
     }
@@ -278,24 +285,74 @@ public class RequestParametersValidator {
     return (values != null && !values.isEmpty()) ? values.get(0) : null;
   }
 
-  private void validateStringLength(ValidationResult result, String value, String fieldName, int min, int max) {
+  private void validateStringLength(List<String> errors, String value, String fieldName, int min, int max) {
     if (value == null) {
       return;
     }
 
     if (value.length() < min) {
-      result.addError(fieldName + " must be at least " + min + " characters");
+      errors.add(fieldName + " must be at least " + min + " characters");
     }
 
     if (value.length() > max) {
-      result.addError(fieldName + " must be at most " + max + " characters");
+      errors.add(fieldName + " must be at most " + max + " characters");
     }
   }
 
-  private void validateRequiredParam(ValidationResult result, Map<String, List<String>> params, String paramName) {
+  private void validateRequiredParam(List<String> errors, Map<String, List<String>> params, String paramName) {
     String value = getFirstParam(params, paramName);
     if (value == null || value.trim().isEmpty()) {
-      result.addError("Parameter '" + paramName + "' is required and cannot be empty");
+      errors.add("Parameter '" + paramName + "' is required and cannot be empty");
     }
+  }
+
+  private void validateUserRole(List<String> errors, Map<String, List<String>> params) {
+    if (params.containsKey("role")) {
+      String role = getFirstParam(params, "role");
+      if (!UserRole.isValid(role)) {
+        errors.add("Invalid role. Allowed: " + String.join(", ", UserRole.getAllValues()));
+      }
+    }
+  }
+
+  // Класс результата валидации
+  public static class ValidationResult {
+    private final boolean valid;
+    private final List<String> errors;
+
+    public ValidationResult(boolean valid, List<String> errors) {
+      this.valid = valid;
+      this.errors = errors;
+    }
+
+    public boolean getValid() {
+      return valid;
+    }
+
+    public List<String> getErrors() {
+      return errors;
+    }
+
+    public String getErrorsAsString() {
+      return String.join(", ", errors);
+    }
+  }
+
+  // Простой парсер URI для обратной совместимости
+  private Map<String, String> parseUri(String uri) {
+    Map<String, String> params = new HashMap<>();
+
+    if (uri.contains("?")) {
+      String query = uri.substring(uri.indexOf("?") + 1);
+      String[] pairs = query.split("&");
+      for (String pair : pairs) {
+        String[] keyValue = pair.split("=");
+        if (keyValue.length == 2) {
+          params.put(keyValue[0], keyValue[1]);
+        }
+      }
+    }
+
+    return params;
   }
 }
