@@ -1,9 +1,9 @@
 package com.mipt.controller;
 
 public enum DataType {
-  STRING("string"),
   JSON("json"),
-  BYTES("bytes");
+  BYTES("byte[]"),
+  STRING("string");
 
   private final String value;
 
@@ -15,30 +15,27 @@ public enum DataType {
     return value;
   }
 
-  // Преобразование из строки в enum
-  public static DataType fromString(String value) {
-    if (value == null) return null;
+  public static DataType fromString(String type) {
+    if (type == null) return null;
 
-    for (DataType type : DataType.values()) {
-      if (type.value.equalsIgnoreCase(value)) {
-        return type;
+    for (DataType dataType : DataType.values()) {
+      if (dataType.getValue().equals(type.toLowerCase())) {
+        return dataType;
       }
     }
     return null;
   }
 
-  // Проверка существования типа
-  public static boolean isValid(String value) {
-    return fromString(value) != null;
+  public static boolean isValid(String type) {
+    return fromString(type) != null;
   }
 
-  // Получение всех допустимых значений
   public static String[] getAllValues() {
     DataType[] types = values();
-    String[] result = new String[types.length];
+    String[] values = new String[types.length];
     for (int i = 0; i < types.length; i++) {
-      result[i] = types[i].getValue();
+      values[i] = types[i].getValue();
     }
-    return result;
+    return values;
   }
 }
