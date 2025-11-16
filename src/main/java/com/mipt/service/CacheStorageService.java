@@ -113,6 +113,9 @@ public class CacheStorageService {
       return CacheResult.error("Error updating data: " + e.getMessage());
     }
   }
+  public boolean cacheExists(String storageToken) {
+    return storageCaches.containsKey(storageToken);
+  }
 
   public CacheResult deleteData(String storageToken, String dataType, String key) {
     try {

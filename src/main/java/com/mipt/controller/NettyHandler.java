@@ -63,9 +63,9 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
   private void handleCacheRequest(ChannelHandlerContext ctx, String method, String uri, String content) {
     // Валидация запроса
-    ValidationResult validation = validator.validateRequest(method, uri);
+    RequestParametersValidator.ValidationResult validation = validator.validateRequest(method, uri);
     if (!validation.getValid()) {
-      sendBadRequest(ctx, validation.getErrors());
+      sendBadRequest(ctx, validation.getErrorsAsString()); // Используем getErrorsAsString() вместо getErrors()
       return;
     }
 
@@ -142,109 +142,68 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   }
 
   private FullHttpResponse handleCacheGet(String storageToken, String type, String key) {
-    if (!cacheService.storageExists(storageToken)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
+    // Используем CacheStorageService вместо прямого доступа к кэшу
+    com.mipt.cache.CacheResult result = cacheService.readData(storageToken, type, key);
+
+    if (!result.isSuccess()) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, result.getMessage());
     }
 
-    if (!DataType.isValid(type)) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST,
-          "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
-    }
-
-    Cache cache = cacheService.getCache(storageToken, type);
-    if (cache == null) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for type " + type + " not found");
-    }
-
-    Object value = cache.get(key);
-    if (value == null) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Key not found: " + key);
-    }
-
-    // Возвращаем данные в правильном формате
-    String responseData = formatDataForResponse(value, type);
+    // Форматируем данные для ответа
+    String responseData = formatDataForResponse(result.getData(), type);
     return createResponse(HttpResponseStatus.OK, responseData);
   }
 
   private FullHttpResponse handleCachePost(String storageToken, String type, String key, String value) {
-    if (!cacheService.storageExists(storageToken)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
+    try {
+      // Валидация данных и преобразование в Object
+      Object processedValue = processDataForStorage(value, type);
+
+      // Используем CacheStorageService для вставки
+      com.mipt.cache.CacheResult result = cacheService.insertData(storageToken, type, key, processedValue.toString());
+
+      if (!result.isSuccess()) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
+      }
+
+      return createResponse(HttpResponseStatus.OK, result.getMessage());
+    } catch (IllegalArgumentException e) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type " + type + ": " + e.getMessage());
+    } catch (Exception e) {
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Error processing data: " + e.getMessage());
     }
-
-    if (!DataType.isValid(type)) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST,
-          "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
-    }
-
-    // Валидация данных в зависимости от типа
-    if (!validateDataByType(value, type)) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type: " + type);
-    }
-
-    Cache cache = cacheService.getCache(storageToken, type);
-    if (cache == null) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for type " + type + " not found");
-    }
-
-    if (cache.containsKey(key)) {
-      return createResponse(HttpResponseStatus.CONFLICT, "Key already exists: " + key);
-    }
-
-    // Сохраняем значение (может потребоваться преобразование типа)
-    Object processedValue = processDataForStorage(value, type);
-    cache.put(key, processedValue);
-
-    return createResponse(HttpResponseStatus.OK, "Value inserted successfully for key: " + key);
   }
 
+
   private FullHttpResponse handleCachePut(String storageToken, String type, String key, String value) {
-    if (!cacheService.storageExists(storageToken)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
+    try {
+      // Валидация данных и преобразование в Object
+      Object processedValue = processDataForStorage(value, type);
+
+      // Используем CacheStorageService для обновления
+      com.mipt.cache.CacheResult result = cacheService.updateData(storageToken, type, key, processedValue.toString());
+
+      if (!result.isSuccess()) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
+      }
+
+      return createResponse(HttpResponseStatus.OK, result.getMessage());
+    } catch (IllegalArgumentException e) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type " + type + ": " + e.getMessage());
+    } catch (Exception e) {
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Error processing data: " + e.getMessage());
     }
-
-    if (!DataType.isValid(type)) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST,
-          "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
-    }
-
-    // Валидация данных в зависимости от типа
-    if (!validateDataByType(value, type)) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type: " + type);
-    }
-
-    Cache cache = cacheService.getCache(storageToken, type);
-    if (cache == null) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for type " + type + " not found");
-    }
-
-    // Сохраняем значение (может потребоваться преобразование типа)
-    Object processedValue = processDataForStorage(value, type);
-    cache.put(key, processedValue);
-
-    return createResponse(HttpResponseStatus.OK, "Value updated successfully for key: " + key);
   }
 
   private FullHttpResponse handleCacheDelete(String storageToken, String type, String key) {
-    if (!cacheService.storageExists(storageToken)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
+    // Используем CacheStorageService для удаления
+    com.mipt.cache.CacheResult result = cacheService.deleteData(storageToken, type, key);
+
+    if (!result.isSuccess()) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
     }
 
-    if (!DataType.isValid(type)) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST,
-          "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
-    }
-
-    Cache cache = cacheService.getCache(storageToken, type);
-    if (cache == null) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for type " + type + " not found");
-    }
-
-    if (!cache.containsKey(key)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Key not found: " + key);
-    }
-
-    cache.remove(key);
-    return createResponse(HttpResponseStatus.OK, "Key deleted successfully: " + key);
+    return createResponse(HttpResponseStatus.OK, result.getMessage());
   }
 
   private FullHttpResponse handleCreateStorage(Map<String, String> params) {
@@ -359,7 +318,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
   }
 
-  private Object processDataForStorage(String data, String type) {
+  private String processDataForStorage(String data, String type) {
     DataType dataType = DataType.fromString(type);
     if (dataType == null) {
       return data;
@@ -367,12 +326,20 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     switch (dataType) {
       case BYTES:
-        // Преобразуем Base64 строку в массив байтов
-        return java.util.Base64.getDecoder().decode(data);
+        // Для байтов проверяем, что это валидный Base64 и возвращаем как есть
+        // CacheStorageService будет хранить как строку
+        if (isValidBase64(data)) {
+          return data;
+        } else {
+          throw new IllegalArgumentException("Invalid Base64 data");
+        }
       case JSON:
-        // Для JSON можно сохранять как строку или парсить в объект
-        // В данном случае сохраняем как строку
-        return data;
+        // Для JSON проверяем базовую структуру
+        if (isValidJSON(data)) {
+          return data;
+        } else {
+          throw new IllegalArgumentException("Invalid JSON data");
+        }
       case STRING:
       default:
         return data;
@@ -382,21 +349,11 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   private String formatDataForResponse(Object data, String type) {
     DataType dataType = DataType.fromString(type);
     if (dataType == null) {
-      return data.toString();
+      return data != null ? data.toString() : "";
     }
 
-    switch (dataType) {
-      case BYTES:
-        // Преобразуем массив байтов обратно в Base64 строку
-        if (data instanceof byte[]) {
-          return java.util.Base64.getEncoder().encodeToString((byte[]) data);
-        }
-        return data.toString();
-      case JSON:
-      case STRING:
-      default:
-        return data.toString();
-    }
+    // Данные уже правильно обработаны при чтении из кэша
+    return data != null ? data.toString() : "";
   }
 
   private void sendInfoPage(ChannelHandlerContext ctx) {
