@@ -1,3 +1,4 @@
+import com.mipt.server.HttpRequestHandler;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -33,8 +34,7 @@ public class NettyHttpServer {
               p.addLast(new HttpServerCodec());
 
               p.addLast(new HttpObjectAggregator(65536));
-//              Надо реализовать HttpRequestHandler кастомный обработчик HTTP запросов
-//              p.addLast(new HttpRequestHandler());
+              //p.addLast(new HttpRequestHandler());
             }
           })
           .option(ChannelOption.SO_BACKLOG, 128)

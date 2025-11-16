@@ -1,38 +1,38 @@
 package com.mipt;
 
-import com.mipt.userstorage.database.DatabaseInitializer;
-import com.mipt.userstorage.dao.*;
 import com.mipt.server.NettyHttpServer;
 import com.mipt.service.CacheStorageService;
+import com.mipt.userstorage.dao.UserDAO;
+import com.mipt.userstorage.dao.PermissionDAO;
+import com.mipt.userstorage.dao.CacheStorageDAO;
 
 public class Main {
+
   public static void main(String[] args) {
     try {
-      // 1. Инициализируем базу данных
-      System.out.println("Initializing database...");
-      DatabaseInitializer.initializeDatabase();
+      int port = 8080;
+      if (args.length > 0) {
+        port = Integer.parseInt(args[0]);
+      }
 
-      // 2. Инициализируем DAO
+      // Создаем экземпляры DAO
       UserDAO userDAO = new UserDAO();
-      CacheStorageDAO cacheStorageDAO = new CacheStorageDAO();
       PermissionDAO permissionDAO = new PermissionDAO();
+      CacheStorageDAO cacheStorageDAO = new CacheStorageDAO();
 
-      // 3. Инициализируем сервис кэшей
+      // Создаем сервис кэширования
       CacheStorageService cacheService = new CacheStorageService(cacheStorageDAO);
 
-      // 4. Запускаем Netty HTTP сервер
-      int port = 8080;
-      NettyHttpServer server = new NettyHttpServer(
-          port, cacheService, userDAO, permissionDAO, cacheStorageDAO
-      );
+      System.out.println("Starting HTTP Cache Server on port " + port + "...");
 
+      NettyHttpServer server = new NettyHttpServer(port, cacheService, userDAO, permissionDAO,
+          cacheStorageDAO);
       server.run();
 
     } catch (Exception e) {
-      System.err.println("Failed to start application: " + e.getMessage());
+      System.err.println("Server error: " + e.getMessage());
       e.printStackTrace();
-    } finally {
-      com.mipt.userstorage.database.DatabaseConnection.closeConnection();
+      System.exit(1);
     }
   }
 }
