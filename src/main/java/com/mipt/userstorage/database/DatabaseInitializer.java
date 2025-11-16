@@ -14,7 +14,7 @@ public class DatabaseInitializer {
 
         "CREATE TABLE IF NOT EXISTS cache_storages (" +
             "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
-            "storage_token VARCHAR(255) NOT NULL, ",
+            "storage_token VARCHAR(255) UNIQUE NOT NULL)",
 
         "CREATE TABLE IF NOT EXISTS user_storage_permissions (" +
             "user_id BIGINT NOT NULL, " +
@@ -26,7 +26,6 @@ public class DatabaseInitializer {
     };
 
     String[] insertData = {
-        // Очищаем и добавляем пользователя admin
         "DELETE FROM user_storage_permissions",
         "DELETE FROM cache_storages",
         "DELETE FROM users",

@@ -41,7 +41,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     System.out.println("Received " + method + " request: " + uri);
 
-
     if ("/".equals(uri)) {
       sendInfoPage(ctx);
       return;
@@ -61,7 +60,8 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
   }
 
-  private void handleCacheRequest(ChannelHandlerContext ctx, String method, String uri, String content) {
+  private void handleCacheRequest(ChannelHandlerContext ctx, String method, String uri,
+      String content) {
 
     RequestParametersValidator.ValidationResult validation = validator.validateRequest(method, uri);
     if (!validation.getValid()) {
@@ -107,13 +107,15 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       }
     } catch (Exception e) {
       System.err.println("Error processing cache request: " + e.getMessage());
-      response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Server error: " + e.getMessage());
+      response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Server error: " + e.getMessage());
     }
 
     ctx.writeAndFlush(response);
   }
 
-  private void handleStorageRequest(ChannelHandlerContext ctx, String method, String uri, String content) {
+  private void handleStorageRequest(ChannelHandlerContext ctx, String method, String uri,
+      String content) {
     Map<String, String> params = parseUri(uri);
 
     FullHttpResponse response;
@@ -121,7 +123,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     try {
       switch (method) {
         case "POST":
-          // Создание нового хранилища
           response = handleCreateStorage(params);
           break;
         case "PUT":
@@ -134,7 +135,8 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       }
     } catch (Exception e) {
       System.err.println("Error processing storage request: " + e.getMessage());
-      response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Server error: " + e.getMessage());
+      response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Server error: " + e.getMessage());
     }
 
     ctx.writeAndFlush(response);
@@ -152,17 +154,21 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       return createResponse(HttpResponseStatus.OK, responseData);
 
     } catch (IllegalArgumentException e) {
-      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Error formatting response: " + e.getMessage());
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error formatting response: " + e.getMessage());
     } catch (Exception e) {
-      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Error reading data: " + e.getMessage());
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error reading data: " + e.getMessage());
     }
   }
 
-  private FullHttpResponse handleCachePost(String storageToken, String type, String key, String value) {
+  private FullHttpResponse handleCachePost(String storageToken, String type, String key,
+      String value) {
     try {
       Object processedValue = DataTypeValidator.processDataForStorage(value, type);
 
-      com.mipt.cache.CacheResult result = cacheService.insertData(storageToken, type, key, processedValue.toString());
+      com.mipt.cache.CacheResult result = cacheService.insertData(storageToken, type, key,
+          processedValue.toString());
 
       if (!result.isSuccess()) {
         return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
@@ -170,17 +176,21 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
       return createResponse(HttpResponseStatus.OK, result.getMessage());
     } catch (IllegalArgumentException e) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type " + type + ": " + e.getMessage());
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Invalid data format for type " + type + ": " + e.getMessage());
     } catch (Exception e) {
-      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Error processing data: " + e.getMessage());
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error processing data: " + e.getMessage());
     }
   }
 
-  private FullHttpResponse handleCachePut(String storageToken, String type, String key, String value) {
+  private FullHttpResponse handleCachePut(String storageToken, String type, String key,
+      String value) {
     try {
       Object processedValue = DataTypeValidator.processDataForStorage(value, type);
 
-      com.mipt.cache.CacheResult result = cacheService.updateData(storageToken, type, key, processedValue.toString());
+      com.mipt.cache.CacheResult result = cacheService.updateData(storageToken, type, key,
+          processedValue.toString());
 
       if (!result.isSuccess()) {
         return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
@@ -188,9 +198,11 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
       return createResponse(HttpResponseStatus.OK, result.getMessage());
     } catch (IllegalArgumentException e) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type " + type + ": " + e.getMessage());
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Invalid data format for type " + type + ": " + e.getMessage());
     } catch (Exception e) {
-      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Error processing data: " + e.getMessage());
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error processing data: " + e.getMessage());
     }
   }
 
@@ -209,24 +221,23 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     String login = params.get("login");
     String password = params.get("password");
 
-
     if (login == null || password == null) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Missing parameters: login or password");
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Missing parameters: login or password");
     }
-
 
     User user = userDAO.findByUsername(login);
-    if (user == null || !user.getPasswordPlain().equals(password)) {
-      return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid credentials");
+    if (user == null) {
+      userDAO.createUser(login, password);
+      User createdUser = userDAO.findByUsername(login);
+      String storageToken = cacheService.createNewStorage();
+      Long storageId = cacheStorageDAO.createStorage(storageToken);
+      permissionDAO.grantPermission(createdUser.getId(), storageId, "admin");
+      return createResponse(HttpResponseStatus.OK,
+          "Storage created successfully. Token: " + storageToken);
     }
+    return createResponse(HttpResponseStatus.UNAUTHORIZED, "User already exists");
 
-
-    String storageToken = cacheService.createNewStorage();
-
-
-
-
-    return createResponse(HttpResponseStatus.OK, "Storage created successfully. Token: " + storageToken);
   }
 
   private FullHttpResponse handleAddUserToStorage(Map<String, String> params) {
@@ -236,29 +247,25 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     String role = params.get("role");
     String storageToken = params.get("storage_token");
 
-
-    if (login == null || password == null || addedUser == null || role == null || storageToken == null) {
+    if (login == null || password == null || addedUser == null || role == null
+        || storageToken == null) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
           "Missing parameters: login, password, addeduser, role or storage_token");
     }
-
 
     User user = userDAO.findByUsername(login);
     if (user == null || !user.getPasswordPlain().equals(password)) {
       return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid credentials");
     }
 
-
     User userToAdd = userDAO.findByUsername(addedUser);
     if (userToAdd == null) {
       return createResponse(HttpResponseStatus.BAD_REQUEST, "User to add not found: " + addedUser);
     }
 
-
     if (!cacheService.storageExists(storageToken)) {
       return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
     }
-
 
     if (!UserRole.isValid(role)) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
@@ -275,16 +282,20 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         "Available endpoints:\n" +
         "CACHE OPERATIONS:\n" +
         "GET    /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD\n" +
-        "POST   /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD (with body)\n" +
-        "PUT    /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD (with body)\n" +
+        "POST   /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD (with body)\n"
+        +
+        "PUT    /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD (with body)\n"
+        +
         "DELETE /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD\n\n" +
         "STORAGE OPERATIONS:\n" +
         "POST   /storage?login=USERNAME&password=PASSWORD (create new storage)\n" +
-        "PUT    /storage?login=USERNAME&password=PASSWORD&addeduser=USER&role=ROLE&storage_token=TOKEN (add user)\n\n" +
+        "PUT    /storage?login=USERNAME&password=PASSWORD&addeduser=USER&role=ROLE&storage_token=TOKEN (add user)\n\n"
+        +
         "Data types: " + String.join(", ", DataType.getAllValues()) + "\n" +
         "User roles: " + String.join(", ", UserRole.getAllValues()) + "\n\n" +
         "Examples:\n" +
-        "curl \"http://localhost:8080/cache?storage_token=abc123&key=test&type=string&login=admin&password=pass\"\n" +
+        "curl \"http://localhost:8080/cache?storage_token=abc123&key=test&type=string&login=admin&password=pass\"\n"
+        +
         "curl -X POST -d 'value' \"http://localhost:8080/cache?storage_token=abc123&key=test&type=string&login=admin&password=pass\"";
 
     FullHttpResponse response = createResponse(HttpResponseStatus.OK, info);
