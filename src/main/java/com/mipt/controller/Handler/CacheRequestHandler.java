@@ -1,11 +1,11 @@
 package com.mipt.controller.Handler;
 
 import com.mipt.cache.CacheResult;
-import com.mipt.cache.CacheStorage;
 import com.mipt.controller.DataType;
 import com.mipt.controller.DataTypeProcessor;
 import com.mipt.controller.RequestParametersValidator;
 import com.mipt.controller.ValidationResult;
+import com.mipt.service.CacheStorageService;
 import com.mipt.userstorage.dao.UserDAO;
 import com.mipt.userstorage.model.User;
 import io.netty.channel.ChannelHandlerContext;
@@ -15,13 +15,13 @@ import java.util.Map;
 
 public class CacheRequestHandler extends BaseNettyHandler {
 
-  private final CacheStorage cacheStorage;
+  private final CacheStorageService cacheStorageService;
   private final UserDAO userDAO;
   private final RequestParametersValidator validator;
   private final DataTypeProcessor dataTypeProcessor;
 
-  public CacheRequestHandler(CacheStorage cacheStorage, UserDAO userDAO) {
-    this.cacheStorage = cacheStorage;
+  public CacheRequestHandler(CacheStorageService cacheStorageService, UserDAO userDAO) {
+    this.cacheStorageService = cacheStorageService;
     this.userDAO = userDAO;
     this.validator = new RequestParametersValidator();
     this.dataTypeProcessor = new DataTypeProcessor();
@@ -35,6 +35,7 @@ public class CacheRequestHandler extends BaseNettyHandler {
     }
 
     Map<String, String> params = parseUri(uri);
+    String storageToken = params.get("storage_token");
     String type = params.get("type");
     String key = params.get("key");
     String login = params.get("login");
@@ -51,13 +52,13 @@ public class CacheRequestHandler extends BaseNettyHandler {
     try {
       switch (method) {
         case "GET":
-          return handleGet(type, key);
+          return handleGet(storageToken, type, key);
         case "POST":
-          return handlePost(type, key, content);
+          return handlePost(storageToken, type, key, content);
         case "PUT":
-          return handlePut(type, key, content);
+          return handlePut(storageToken, type, key, content);
         case "DELETE":
-          return handleDelete(type, key);
+          return handleDelete(storageToken, type, key);
         default:
           return createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED, "Method not allowed");
       }
@@ -67,13 +68,17 @@ public class CacheRequestHandler extends BaseNettyHandler {
     }
   }
 
-  private FullHttpResponse handleGet(String type, String key) {
+  private FullHttpResponse handleGet(String storageToken, String type, String key) {
+    if (!cacheStorageService.storageExists(storageToken)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
+    }
+
     if (!DataType.isValid(type)) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
           "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
     }
 
-    CacheResult result = cacheStorage.read(type, key);
+    CacheResult result = cacheStorageService.readData(storageToken, type, key);
     if (!result.isSuccess()) {
       return createResponse(HttpResponseStatus.NOT_FOUND, result.getMessage());
     }
@@ -82,16 +87,20 @@ public class CacheRequestHandler extends BaseNettyHandler {
     return createResponse(HttpResponseStatus.OK, responseData);
   }
 
-  private FullHttpResponse handlePost(String type, String key, String value) {
-    return handleDataModification(type, key, value, true);
+  private FullHttpResponse handlePost(String storageToken, String type, String key, String value) {
+    return handleDataModification(storageToken, type, key, value, true);
   }
 
-  private FullHttpResponse handlePut(String type, String key, String value) {
-    return handleDataModification(type, key, value, false);
+  private FullHttpResponse handlePut(String storageToken, String type, String key, String value) {
+    return handleDataModification(storageToken, type, key, value, false);
   }
 
-  private FullHttpResponse handleDataModification(String type, String key,
+  private FullHttpResponse handleDataModification(String storageToken, String type, String key,
       String value, boolean checkExistence) {
+    if (!cacheStorageService.storageExists(storageToken)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
+    }
+
     if (!DataType.isValid(type)) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
           "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
@@ -101,13 +110,11 @@ public class CacheRequestHandler extends BaseNettyHandler {
       return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type: " + type);
     }
 
-    Object processedValue = dataTypeProcessor.processDataForStorage(value, type);
     CacheResult result;
-
     if (checkExistence) {
-      result = cacheStorage.insert(type, key, processedValue);
+      result = cacheStorageService.insertData(storageToken, type, key, value);
     } else {
-      result = cacheStorage.put(type, key, processedValue);
+      result = cacheStorageService.updateData(storageToken, type, key, value);
     }
 
     if (!result.isSuccess()) {
@@ -121,13 +128,17 @@ public class CacheRequestHandler extends BaseNettyHandler {
     return createResponse(HttpResponseStatus.OK, "Value " + message + " successfully for key: " + key);
   }
 
-  private FullHttpResponse handleDelete(String type, String key) {
+  private FullHttpResponse handleDelete(String storageToken, String type, String key) {
+    if (!cacheStorageService.storageExists(storageToken)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
+    }
+
     if (!DataType.isValid(type)) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
           "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
     }
 
-    CacheResult result = cacheStorage.delete(type, key);
+    CacheResult result = cacheStorageService.deleteData(storageToken, type, key);
     if (!result.isSuccess()) {
       return createResponse(HttpResponseStatus.NOT_FOUND, result.getMessage());
     }

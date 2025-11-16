@@ -1,6 +1,6 @@
 package com.mipt.controller.Handler;
 
-import com.mipt.cache.CacheStorage;
+import com.mipt.service.CacheStorageService;
 import com.mipt.controller.RequestParametersValidator;
 import com.mipt.controller.UserRole;
 import com.mipt.userstorage.dao.UserDAO;
@@ -8,16 +8,15 @@ import com.mipt.userstorage.model.User;
 import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import java.util.Map;
-import java.util.UUID;
 
 public class StorageRequestHandler extends BaseNettyHandler {
 
-  private final CacheStorage cacheStorage;
+  private final CacheStorageService cacheStorageService;
   private final UserDAO userDAO;
   private final RequestParametersValidator validator;
 
-  public StorageRequestHandler(CacheStorage cacheStorage, UserDAO userDAO) {
-    this.cacheStorage = cacheStorage;
+  public StorageRequestHandler(CacheStorageService cacheStorageService, UserDAO userDAO) {
+    this.cacheStorageService = cacheStorageService;
     this.userDAO = userDAO;
     this.validator = new RequestParametersValidator();
   }
@@ -29,8 +28,8 @@ public class StorageRequestHandler extends BaseNettyHandler {
       switch (method) {
         case "POST":
           return handleCreateStorage(params);
-        case "GET":
-          return handleGetStats(params);
+        case "PUT":
+          return handleAddUserToStorage(params);
         default:
           return createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED, "Method not allowed");
       }
@@ -52,38 +51,42 @@ public class StorageRequestHandler extends BaseNettyHandler {
       return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid credentials");
     }
 
-    // В новой архитектуре CacheStorage создается один раз, поэтому генерируем токен для информации
-    String storageToken = UUID.randomUUID().toString();
-    return createResponse(HttpResponseStatus.OK, "Storage initialized. Token: " + storageToken + "\nNote: In new architecture, CacheStorage is singleton with unified storage.");
+    String storageToken = cacheStorageService.createNewStorage();
+    return createResponse(HttpResponseStatus.OK, "Storage created successfully. Token: " + storageToken);
   }
 
-  private FullHttpResponse handleGetStats(Map<String, String> params) {
+  private FullHttpResponse handleAddUserToStorage(Map<String, String> params) {
     String login = params.get("login");
     String password = params.get("password");
+    String addedUser = params.get("addeduser");
+    String role = params.get("role");
+    String storageToken = params.get("storage_token");
 
-    if (login == null || password == null) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Missing parameters: login or password");
+    if (login == null || password == null || addedUser == null || role == null || storageToken == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Missing parameters: login, password, addeduser, role or storage_token");
     }
 
     if (!authenticateUser(login, password)) {
       return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid credentials");
     }
 
-    Map<String, Integer> stats = cacheStorage.getStats();
-    StringBuilder statsBuilder = new StringBuilder();
-    statsBuilder.append("Cache Storage Statistics:\n\n");
-
-    if (stats.isEmpty()) {
-      statsBuilder.append("No active caches\n");
-    } else {
-      stats.forEach((type, size) -> {
-        statsBuilder.append("Type: ").append(type)
-            .append(" | Entries: ").append(size)
-            .append("\n");
-      });
+    User userToAdd = userDAO.findByUsername(addedUser);
+    if (userToAdd == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "User to add not found: " + addedUser);
     }
 
-    return createResponse(HttpResponseStatus.OK, statsBuilder.toString());
+    if (!cacheStorageService.storageExists(storageToken)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
+    }
+
+    if (!UserRole.isValid(role)) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Invalid role. Allowed: " + String.join(", ", UserRole.getAllValues()));
+    }
+
+    return createResponse(HttpResponseStatus.OK,
+        "User " + addedUser + " added to storage with role: " + role);
   }
 
   private boolean authenticateUser(String login, String password) {

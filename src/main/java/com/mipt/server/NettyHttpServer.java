@@ -1,8 +1,10 @@
 package com.mipt.server;
 
-import com.mipt.cache.CacheStorage;
-import com.mipt.controller.NettyHandler;
+import com.mipt.controller.Handler.NettyHandler;
+import com.mipt.service.CacheStorageService;
 import com.mipt.userstorage.dao.UserDAO;
+import com.mipt.userstorage.dao.PermissionDAO;
+import com.mipt.userstorage.dao.CacheStorageDAO;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -19,13 +21,18 @@ import io.netty.handler.logging.LoggingHandler;
 public class NettyHttpServer {
 
   private final int port;
-  private final CacheStorage cacheStorage;
+  private final CacheStorageService cacheService;
   private final UserDAO userDAO;
+  private final PermissionDAO permissionDAO;
+  private final CacheStorageDAO cacheStorageDAO;
 
-  public NettyHttpServer(int port, CacheStorage cacheStorage, UserDAO userDAO) {
+  public NettyHttpServer(int port, CacheStorageService cacheService, UserDAO userDAO,
+      PermissionDAO permissionDAO, CacheStorageDAO cacheStorageDAO) {
     this.port = port;
-    this.cacheStorage = cacheStorage;
+    this.cacheService = cacheService;
     this.userDAO = userDAO;
+    this.permissionDAO = permissionDAO;
+    this.cacheStorageDAO = cacheStorageDAO;
   }
 
   public void run() throws Exception {
@@ -43,7 +50,7 @@ public class NettyHttpServer {
               ch.pipeline().addLast(
                   new HttpServerCodec(),
                   new HttpObjectAggregator(1048576),
-                  new NettyHandler(cacheStorage, userDAO)
+                  new NettyHandler(cacheService, userDAO, permissionDAO, cacheStorageDAO)
               );
             }
           })
@@ -58,18 +65,5 @@ public class NettyHttpServer {
       workerGroup.shutdownGracefully();
       bossGroup.shutdownGracefully();
     }
-  }
-
-  public static void main(String[] args) throws Exception {
-    int port = 8080;
-    if (args.length > 0) {
-      port = Integer.parseInt(args[0]);
-    }
-
-    // Создаем экземпляры необходимых компонентов
-    CacheStorage cacheStorage = new CacheStorage(1000); // capacity = 1000
-    UserDAO userDAO = new UserDAO(); // Предполагается, что UserDAO имеет конструктор по умолчанию
-
-    new NettyHttpServer(port, cacheStorage, userDAO).run();
   }
 }
