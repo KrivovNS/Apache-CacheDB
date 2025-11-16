@@ -21,6 +21,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   private final UserDAO userDAO;
   private final PermissionDAO permissionDAO;
   private final CacheStorageDAO cacheStorageDAO;
+  private final RequestParametersValidator validator;
 
   public NettyHandler(CacheStorageService cacheService,
       UserDAO userDAO,
@@ -30,6 +31,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     this.userDAO = userDAO;
     this.permissionDAO = permissionDAO;
     this.cacheStorageDAO = cacheStorageDAO;
+    this.validator = new RequestParametersValidator();
   }
 
   @Override
@@ -50,139 +52,376 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     // Обработка запросов к кэшу
     if (uri.startsWith("/cache")) {
       handleCacheRequest(ctx, method, uri, content);
+    }
+    // Обработка запросов к хранилищу
+    else if (uri.startsWith("/storage")) {
+      handleStorageRequest(ctx, method, uri, content);
     } else {
       sendNotFound(ctx, "Endpoint not found: " + uri);
     }
   }
 
   private void handleCacheRequest(ChannelHandlerContext ctx, String method, String uri, String content) {
+    // Валидация запроса
+    ValidationResult validation = validator.validateRequest(method, uri);
+    if (!validation.getValid()) {
+      sendBadRequest(ctx, validation.getErrors());
+      return;
+    }
+
     // Парсим параметры из URI
     Map<String, String> params = parseUri(uri);
-    String storageName = params.get("storage");
+    String storageToken = params.get("storage_token");
     String key = params.get("key");
-    String username = params.get("user");
+    String type = params.get("type");
+    String login = params.get("login");
+    String password = params.get("password");
 
     FullHttpResponse response;
 
     try {
+      // Проверка аутентификации
+      User user = userDAO.findByUsername(login);
+      if (user == null || !user.getPasswordPlain().equals(password)) {
+        response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid credentials");
+        ctx.writeAndFlush(response);
+        return;
+      }
+
       switch (method) {
         case "GET":
-          response = handleGet(storageName, key, username);
+          response = handleCacheGet(storageToken, type, key);
+          break;
+        case "POST":
+          response = handleCachePost(storageToken, type, key, content);
           break;
         case "PUT":
-          response = handlePut(storageName, key, content, username);
+          response = handleCachePut(storageToken, type, key, content);
           break;
         case "DELETE":
-          response = handleDelete(storageName, key, username);
+          response = handleCacheDelete(storageToken, type, key);
           break;
         default:
           response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED, "Method not allowed");
           break;
       }
     } catch (Exception e) {
-      System.err.println("Error processing request: " + e.getMessage());
+      System.err.println("Error processing cache request: " + e.getMessage());
       response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Server error: " + e.getMessage());
     }
 
     ctx.writeAndFlush(response);
   }
 
-  private FullHttpResponse handleGet(String storageName, String key, String username) {
-    // Проверка параметров
-    if (storageName == null || key == null || username == null) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Missing parameters: storage, key or user");
+  private void handleStorageRequest(ChannelHandlerContext ctx, String method, String uri, String content) {
+    // Парсим параметры из URI
+    Map<String, String> params = parseUri(uri);
+
+    FullHttpResponse response;
+
+    try {
+      switch (method) {
+        case "POST":
+          // Создание нового хранилища
+          response = handleCreateStorage(params);
+          break;
+        case "PUT":
+          // Добавление пользователя в хранилище
+          response = handleAddUserToStorage(params);
+          break;
+        default:
+          response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED, "Method not allowed");
+          break;
+      }
+    } catch (Exception e) {
+      System.err.println("Error processing storage request: " + e.getMessage());
+      response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Server error: " + e.getMessage());
     }
 
-    // Проверка пользователя
-    User user = userDAO.findByUsername(username);
-    if (user == null) {
-      return createResponse(HttpResponseStatus.UNAUTHORIZED, "User not found: " + username);
+    ctx.writeAndFlush(response);
+  }
+
+  private FullHttpResponse handleCacheGet(String storageToken, String type, String key) {
+    if (!cacheService.storageExists(storageToken)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
     }
 
-    // Проверка существования хранилища
-    if (cacheService.cacheExists(storageName)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
+    if (!DataType.isValid(type)) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
     }
 
-    // Получаем кэш
-    Cache cache = cacheService.getCache(storageName);
+    Cache cache = cacheService.getCache(storageToken, type);
+    if (cache == null) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for type " + type + " not found");
+    }
 
-    // Получаем значение
     Object value = cache.get(key);
     if (value == null) {
       return createResponse(HttpResponseStatus.NOT_FOUND, "Key not found: " + key);
     }
 
-    return createResponse(HttpResponseStatus.OK, "Value: " + value.toString());
+    // Возвращаем данные в правильном формате
+    String responseData = formatDataForResponse(value, type);
+    return createResponse(HttpResponseStatus.OK, responseData);
   }
 
-  private FullHttpResponse handlePut(String storageName, String key, String value, String username) {
-    // Проверка параметров
-    if (storageName == null || key == null || username == null || value == null) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Missing parameters: storage, key, user or value");
+  private FullHttpResponse handleCachePost(String storageToken, String type, String key, String value) {
+    if (!cacheService.storageExists(storageToken)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
     }
 
-    // Проверка пользователя
-    User user = userDAO.findByUsername(username);
-    if (user == null) {
-      return createResponse(HttpResponseStatus.UNAUTHORIZED, "User not found: " + username);
+    if (!DataType.isValid(type)) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
     }
 
-    // Проверка существования хранилища
-    if (cacheService.cacheExists(storageName)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
+    // Валидация данных в зависимости от типа
+    if (!validateDataByType(value, type)) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type: " + type);
     }
 
-    // Получаем кэш
-    Cache cache = cacheService.getCache(storageName);
+    Cache cache = cacheService.getCache(storageToken, type);
+    if (cache == null) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for type " + type + " not found");
+    }
 
-    // Сохраняем значение
-    cache.put(key, value);
+    if (cache.containsKey(key)) {
+      return createResponse(HttpResponseStatus.CONFLICT, "Key already exists: " + key);
+    }
 
-    return createResponse(HttpResponseStatus.OK, "Value stored successfully for key: " + key);
+    // Сохраняем значение (может потребоваться преобразование типа)
+    Object processedValue = processDataForStorage(value, type);
+    cache.put(key, processedValue);
+
+    return createResponse(HttpResponseStatus.OK, "Value inserted successfully for key: " + key);
   }
 
-  private FullHttpResponse handleDelete(String storageName, String key, String username) {
-    // Проверка параметров
-    if (storageName == null || key == null || username == null) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Missing parameters: storage, key or user");
+  private FullHttpResponse handleCachePut(String storageToken, String type, String key, String value) {
+    if (!cacheService.storageExists(storageToken)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
     }
 
-    // Проверка пользователя
-    User user = userDAO.findByUsername(username);
-    if (user == null) {
-      return createResponse(HttpResponseStatus.UNAUTHORIZED, "User not found: " + username);
+    if (!DataType.isValid(type)) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
     }
 
-    // Проверка существования хранилища
-    if (cacheService.cacheExists(storageName)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
+    // Валидация данных в зависимости от типа
+    if (!validateDataByType(value, type)) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type: " + type);
     }
 
-    // Получаем кэш
-    Cache cache = cacheService.getCache(storageName);
+    Cache cache = cacheService.getCache(storageToken, type);
+    if (cache == null) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for type " + type + " not found");
+    }
 
-    // Удаляем значение
+    // Сохраняем значение (может потребоваться преобразование типа)
+    Object processedValue = processDataForStorage(value, type);
+    cache.put(key, processedValue);
+
+    return createResponse(HttpResponseStatus.OK, "Value updated successfully for key: " + key);
+  }
+
+  private FullHttpResponse handleCacheDelete(String storageToken, String type, String key) {
+    if (!cacheService.storageExists(storageToken)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
+    }
+
+    if (!DataType.isValid(type)) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
+    }
+
+    Cache cache = cacheService.getCache(storageToken, type);
+    if (cache == null) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache for type " + type + " not found");
+    }
+
+    if (!cache.containsKey(key)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Key not found: " + key);
+    }
+
     cache.remove(key);
-
     return createResponse(HttpResponseStatus.OK, "Key deleted successfully: " + key);
+  }
+
+  private FullHttpResponse handleCreateStorage(Map<String, String> params) {
+    String login = params.get("login");
+    String password = params.get("password");
+
+    // Проверка параметров
+    if (login == null || password == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "Missing parameters: login or password");
+    }
+
+    // Проверка пользователя
+    User user = userDAO.findByUsername(login);
+    if (user == null || !user.getPasswordPlain().equals(password)) {
+      return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid credentials");
+    }
+
+    // Создание нового хранилища
+    String storageToken = cacheService.createNewStorage();
+
+    // Здесь должна быть логика сохранения информации о хранилище в БД
+    // cacheStorageDAO.save(new CacheStorageEntity(storageToken, user.getId()));
+
+    return createResponse(HttpResponseStatus.OK, "Storage created successfully. Token: " + storageToken);
+  }
+
+  private FullHttpResponse handleAddUserToStorage(Map<String, String> params) {
+    String login = params.get("login");
+    String password = params.get("password");
+    String addedUser = params.get("addeduser");
+    String role = params.get("role");
+    String storageToken = params.get("storage_token");
+
+    // Проверка параметров
+    if (login == null || password == null || addedUser == null || role == null || storageToken == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Missing parameters: login, password, addeduser, role or storage_token");
+    }
+
+    // Проверка аутентификации
+    User user = userDAO.findByUsername(login);
+    if (user == null || !user.getPasswordPlain().equals(password)) {
+      return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid credentials");
+    }
+
+    // Проверка существования добавляемого пользователя
+    User userToAdd = userDAO.findByUsername(addedUser);
+    if (userToAdd == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "User to add not found: " + addedUser);
+    }
+
+    // Проверка существования хранилища
+    if (!cacheService.storageExists(storageToken)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
+    }
+
+    // Проверка роли
+    if (!UserRole.isValid(role)) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Invalid role. Allowed: " + String.join(", ", UserRole.getAllValues()));
+    }
+
+    // Здесь должна быть логика добавления пользователя в хранилище с указанной ролью
+    // permissionDAO.save(new PermissionEntity(userToAdd.getId(), storageToken, role));
+
+    return createResponse(HttpResponseStatus.OK,
+        "User " + addedUser + " added to storage with role: " + role);
+  }
+
+  // Вспомогательные методы для работы с типами данных
+
+  private boolean validateDataByType(String data, String type) {
+    if (data == null || data.trim().isEmpty()) {
+      return false;
+    }
+
+    DataType dataType = DataType.fromString(type);
+    if (dataType == null) {
+      return false;
+    }
+
+    switch (dataType) {
+      case JSON:
+        return isValidJSON(data);
+      case BYTES:
+        return isValidBase64(data);
+      case STRING:
+        return true; // Любая строка валидна
+      default:
+        return false;
+    }
+  }
+
+  private boolean isValidJSON(String data) {
+    try {
+      // Простая проверка JSON - можно использовать библиотеку типа Jackson для более строгой проверки
+      String trimmed = data.trim();
+      return (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+          (trimmed.startsWith("[") && trimmed.endsWith("]"));
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  private boolean isValidBase64(String data) {
+    try {
+      // Проверка Base64
+      java.util.Base64.getDecoder().decode(data);
+      return true;
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
+  }
+
+  private Object processDataForStorage(String data, String type) {
+    DataType dataType = DataType.fromString(type);
+    if (dataType == null) {
+      return data;
+    }
+
+    switch (dataType) {
+      case BYTES:
+        // Преобразуем Base64 строку в массив байтов
+        return java.util.Base64.getDecoder().decode(data);
+      case JSON:
+        // Для JSON можно сохранять как строку или парсить в объект
+        // В данном случае сохраняем как строку
+        return data;
+      case STRING:
+      default:
+        return data;
+    }
+  }
+
+  private String formatDataForResponse(Object data, String type) {
+    DataType dataType = DataType.fromString(type);
+    if (dataType == null) {
+      return data.toString();
+    }
+
+    switch (dataType) {
+      case BYTES:
+        // Преобразуем массив байтов обратно в Base64 строку
+        if (data instanceof byte[]) {
+          return java.util.Base64.getEncoder().encodeToString((byte[]) data);
+        }
+        return data.toString();
+      case JSON:
+      case STRING:
+      default:
+        return data.toString();
+    }
   }
 
   private void sendInfoPage(ChannelHandlerContext ctx) {
     String info = "Cache Storage HTTP Server\n\n" +
         "Available endpoints:\n" +
-        "GET    /cache?storage=NAME&key=KEY&user=USERNAME\n" +
-        "PUT    /cache?storage=NAME&key=KEY&user=USERNAME (with body)\n" +
-        "DELETE /cache?storage=NAME&key=KEY&user=USERNAME\n\n" +
-        "Example:\n" +
-        "curl \"http://localhost:8080/cache?storage=session_cache&key=test&user=admin\"";
+        "CACHE OPERATIONS:\n" +
+        "GET    /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD\n" +
+        "POST   /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD (with body)\n" +
+        "PUT    /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD (with body)\n" +
+        "DELETE /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD\n\n" +
+        "STORAGE OPERATIONS:\n" +
+        "POST   /storage?login=USERNAME&password=PASSWORD (create new storage)\n" +
+        "PUT    /storage?login=USERNAME&password=PASSWORD&addeduser=USER&role=ROLE&storage_token=TOKEN (add user)\n\n" +
+        "Data types: " + String.join(", ", DataType.getAllValues()) + "\n" +
+        "User roles: " + String.join(", ", UserRole.getAllValues()) + "\n\n" +
+        "Examples:\n" +
+        "curl \"http://localhost:8080/cache?storage_token=abc123&key=test&type=string&login=admin&password=pass\"\n" +
+        "curl -X POST -d 'value' \"http://localhost:8080/cache?storage_token=abc123&key=test&type=string&login=admin&password=pass\"";
 
     FullHttpResponse response = createResponse(HttpResponseStatus.OK, info);
     ctx.writeAndFlush(response);
   }
 
-  private void sendNoContent(ChannelHandlerContext ctx) {
-    FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.NO_CONTENT);
+  private void sendBadRequest(ChannelHandlerContext ctx, String message) {
+    FullHttpResponse response = createResponse(HttpResponseStatus.BAD_REQUEST, message);
     ctx.writeAndFlush(response);
   }
 
