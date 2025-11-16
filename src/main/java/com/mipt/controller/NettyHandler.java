@@ -21,6 +21,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   private final UserDAO userDAO;
   private final PermissionDAO permissionDAO;
   private final CacheStorageDAO cacheStorageDAO;
+  private final RequestParametersValidator validator;
 
   public NettyHandler(CacheStorageService cacheService,
       UserDAO userDAO,
@@ -30,6 +31,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     this.userDAO = userDAO;
     this.permissionDAO = permissionDAO;
     this.cacheStorageDAO = cacheStorageDAO;
+    this.validator = new RequestParametersValidator();
   }
 
   @Override
@@ -39,7 +41,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     System.out.println("Received " + method + " request: " + uri);
 
-    // Обработка корневого пути
+
     if ("/".equals(uri)) {
       sendInfoPage(ctx);
       return;
@@ -50,139 +52,247 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     // Обработка запросов к кэшу
     if (uri.startsWith("/cache")) {
       handleCacheRequest(ctx, method, uri, content);
+    }
+    // Обработка запросов к хранилищу
+    else if (uri.startsWith("/storage")) {
+      handleStorageRequest(ctx, method, uri, content);
     } else {
       sendNotFound(ctx, "Endpoint not found: " + uri);
     }
   }
 
   private void handleCacheRequest(ChannelHandlerContext ctx, String method, String uri, String content) {
+
+    RequestParametersValidator.ValidationResult validation = validator.validateRequest(method, uri);
+    if (!validation.getValid()) {
+      sendBadRequest(ctx, validation.getErrorsAsString());
+      return;
+    }
+
     // Парсим параметры из URI
     Map<String, String> params = parseUri(uri);
-    String storageName = params.get("storage");
+    String storageToken = params.get("storage_token");
     String key = params.get("key");
-    String username = params.get("user");
+    String type = params.get("type");
+    String login = params.get("login");
+    String password = params.get("password");
 
     FullHttpResponse response;
 
     try {
+
+      User user = userDAO.findByUsername(login);
+      if (user == null || !user.getPasswordPlain().equals(password)) {
+        response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid credentials");
+        ctx.writeAndFlush(response);
+        return;
+      }
+
       switch (method) {
         case "GET":
-          response = handleGet(storageName, key, username);
+          response = handleCacheGet(storageToken, type, key);
+          break;
+        case "POST":
+          response = handleCachePost(storageToken, type, key, content);
           break;
         case "PUT":
-          response = handlePut(storageName, key, content, username);
+          response = handleCachePut(storageToken, type, key, content);
           break;
         case "DELETE":
-          response = handleDelete(storageName, key, username);
+          response = handleCacheDelete(storageToken, type, key);
           break;
         default:
           response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED, "Method not allowed");
           break;
       }
     } catch (Exception e) {
-      System.err.println("Error processing request: " + e.getMessage());
+      System.err.println("Error processing cache request: " + e.getMessage());
       response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Server error: " + e.getMessage());
     }
 
     ctx.writeAndFlush(response);
   }
 
-  private FullHttpResponse handleGet(String storageName, String key, String username) {
-    // Проверка параметров
-    if (storageName == null || key == null || username == null) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Missing parameters: storage, key or user");
+  private void handleStorageRequest(ChannelHandlerContext ctx, String method, String uri, String content) {
+    Map<String, String> params = parseUri(uri);
+
+    FullHttpResponse response;
+
+    try {
+      switch (method) {
+        case "POST":
+          // Создание нового хранилища
+          response = handleCreateStorage(params);
+          break;
+        case "PUT":
+          // Добавление пользователя в хранилище
+          response = handleAddUserToStorage(params);
+          break;
+        default:
+          response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED, "Method not allowed");
+          break;
+      }
+    } catch (Exception e) {
+      System.err.println("Error processing storage request: " + e.getMessage());
+      response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Server error: " + e.getMessage());
     }
 
-    // Проверка пользователя
-    User user = userDAO.findByUsername(username);
-    if (user == null) {
-      return createResponse(HttpResponseStatus.UNAUTHORIZED, "User not found: " + username);
-    }
-
-    // Проверка существования хранилища
-    if (cacheService.cacheExists(storageName)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
-    }
-
-    // Получаем кэш
-    Cache cache = cacheService.getCache(storageName);
-
-    // Получаем значение
-    Object value = cache.get(key);
-    if (value == null) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Key not found: " + key);
-    }
-
-    return createResponse(HttpResponseStatus.OK, "Value: " + value.toString());
+    ctx.writeAndFlush(response);
   }
 
-  private FullHttpResponse handlePut(String storageName, String key, String value, String username) {
-    // Проверка параметров
-    if (storageName == null || key == null || username == null || value == null) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Missing parameters: storage, key, user or value");
+  private FullHttpResponse handleCacheGet(String storageToken, String type, String key) {
+    try {
+      com.mipt.cache.CacheResult result = cacheService.readData(storageToken, type, key);
+
+      if (!result.isSuccess()) {
+        return createResponse(HttpResponseStatus.NOT_FOUND, result.getMessage());
+      }
+
+      String responseData = DataTypeValidator.formatDataForResponse(result.getData(), type);
+      return createResponse(HttpResponseStatus.OK, responseData);
+
+    } catch (IllegalArgumentException e) {
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Error formatting response: " + e.getMessage());
+    } catch (Exception e) {
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Error reading data: " + e.getMessage());
     }
-
-    // Проверка пользователя
-    User user = userDAO.findByUsername(username);
-    if (user == null) {
-      return createResponse(HttpResponseStatus.UNAUTHORIZED, "User not found: " + username);
-    }
-
-    // Проверка существования хранилища
-    if (cacheService.cacheExists(storageName)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
-    }
-
-    // Получаем кэш
-    Cache cache = cacheService.getCache(storageName);
-
-    // Сохраняем значение
-    cache.put(key, value);
-
-    return createResponse(HttpResponseStatus.OK, "Value stored successfully for key: " + key);
   }
 
-  private FullHttpResponse handleDelete(String storageName, String key, String username) {
-    // Проверка параметров
-    if (storageName == null || key == null || username == null) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, "Missing parameters: storage, key or user");
+  private FullHttpResponse handleCachePost(String storageToken, String type, String key, String value) {
+    try {
+      Object processedValue = DataTypeValidator.processDataForStorage(value, type);
+
+      com.mipt.cache.CacheResult result = cacheService.insertData(storageToken, type, key, processedValue.toString());
+
+      if (!result.isSuccess()) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
+      }
+
+      return createResponse(HttpResponseStatus.OK, result.getMessage());
+    } catch (IllegalArgumentException e) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type " + type + ": " + e.getMessage());
+    } catch (Exception e) {
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Error processing data: " + e.getMessage());
     }
-
-    // Проверка пользователя
-    User user = userDAO.findByUsername(username);
-    if (user == null) {
-      return createResponse(HttpResponseStatus.UNAUTHORIZED, "User not found: " + username);
-    }
-
-    // Проверка существования хранилища
-    if (cacheService.cacheExists(storageName)) {
-      return createResponse(HttpResponseStatus.NOT_FOUND, "Cache not found: " + storageName);
-    }
-
-    // Получаем кэш
-    Cache cache = cacheService.getCache(storageName);
-
-    // Удаляем значение
-    cache.remove(key);
-
-    return createResponse(HttpResponseStatus.OK, "Key deleted successfully: " + key);
   }
+
+  private FullHttpResponse handleCachePut(String storageToken, String type, String key, String value) {
+    try {
+      Object processedValue = DataTypeValidator.processDataForStorage(value, type);
+
+      com.mipt.cache.CacheResult result = cacheService.updateData(storageToken, type, key, processedValue.toString());
+
+      if (!result.isSuccess()) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
+      }
+
+      return createResponse(HttpResponseStatus.OK, result.getMessage());
+    } catch (IllegalArgumentException e) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data format for type " + type + ": " + e.getMessage());
+    } catch (Exception e) {
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Error processing data: " + e.getMessage());
+    }
+  }
+
+  private FullHttpResponse handleCacheDelete(String storageToken, String type, String key) {
+
+    com.mipt.cache.CacheResult result = cacheService.deleteData(storageToken, type, key);
+
+    if (!result.isSuccess()) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
+    }
+
+    return createResponse(HttpResponseStatus.OK, result.getMessage());
+  }
+
+  private FullHttpResponse handleCreateStorage(Map<String, String> params) {
+    String login = params.get("login");
+    String password = params.get("password");
+
+
+    if (login == null || password == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "Missing parameters: login or password");
+    }
+
+
+    User user = userDAO.findByUsername(login);
+    if (user == null || !user.getPasswordPlain().equals(password)) {
+      return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid credentials");
+    }
+
+
+    String storageToken = cacheService.createNewStorage();
+
+
+
+
+    return createResponse(HttpResponseStatus.OK, "Storage created successfully. Token: " + storageToken);
+  }
+
+  private FullHttpResponse handleAddUserToStorage(Map<String, String> params) {
+    String login = params.get("login");
+    String password = params.get("password");
+    String addedUser = params.get("addeduser");
+    String role = params.get("role");
+    String storageToken = params.get("storage_token");
+
+
+    if (login == null || password == null || addedUser == null || role == null || storageToken == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Missing parameters: login, password, addeduser, role or storage_token");
+    }
+
+
+    User user = userDAO.findByUsername(login);
+    if (user == null || !user.getPasswordPlain().equals(password)) {
+      return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid credentials");
+    }
+
+
+    User userToAdd = userDAO.findByUsername(addedUser);
+    if (userToAdd == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "User to add not found: " + addedUser);
+    }
+
+
+    if (!cacheService.storageExists(storageToken)) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Storage not found: " + storageToken);
+    }
+
+
+    if (!UserRole.isValid(role)) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Invalid role. Allowed: " + String.join(", ", UserRole.getAllValues()));
+    }
+
+    return createResponse(HttpResponseStatus.OK,
+        "User " + addedUser + " added to storage with role: " + role);
+  }
+
 
   private void sendInfoPage(ChannelHandlerContext ctx) {
     String info = "Cache Storage HTTP Server\n\n" +
         "Available endpoints:\n" +
-        "GET    /cache?storage=NAME&key=KEY&user=USERNAME\n" +
-        "PUT    /cache?storage=NAME&key=KEY&user=USERNAME (with body)\n" +
-        "DELETE /cache?storage=NAME&key=KEY&user=USERNAME\n\n" +
-        "Example:\n" +
-        "curl \"http://localhost:8080/cache?storage=session_cache&key=test&user=admin\"";
+        "CACHE OPERATIONS:\n" +
+        "GET    /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD\n" +
+        "POST   /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD (with body)\n" +
+        "PUT    /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD (with body)\n" +
+        "DELETE /cache?storage_token=TOKEN&key=KEY&type=TYPE&login=USERNAME&password=PASSWORD\n\n" +
+        "STORAGE OPERATIONS:\n" +
+        "POST   /storage?login=USERNAME&password=PASSWORD (create new storage)\n" +
+        "PUT    /storage?login=USERNAME&password=PASSWORD&addeduser=USER&role=ROLE&storage_token=TOKEN (add user)\n\n" +
+        "Data types: " + String.join(", ", DataType.getAllValues()) + "\n" +
+        "User roles: " + String.join(", ", UserRole.getAllValues()) + "\n\n" +
+        "Examples:\n" +
+        "curl \"http://localhost:8080/cache?storage_token=abc123&key=test&type=string&login=admin&password=pass\"\n" +
+        "curl -X POST -d 'value' \"http://localhost:8080/cache?storage_token=abc123&key=test&type=string&login=admin&password=pass\"";
 
     FullHttpResponse response = createResponse(HttpResponseStatus.OK, info);
     ctx.writeAndFlush(response);
   }
 
-  private void sendNoContent(ChannelHandlerContext ctx) {
-    FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.NO_CONTENT);
+  private void sendBadRequest(ChannelHandlerContext ctx, String message) {
+    FullHttpResponse response = createResponse(HttpResponseStatus.BAD_REQUEST, message);
     ctx.writeAndFlush(response);
   }
 
