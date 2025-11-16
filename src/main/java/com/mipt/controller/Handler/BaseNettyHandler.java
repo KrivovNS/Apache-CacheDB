@@ -9,7 +9,7 @@ import java.util.Map;
 
 public abstract class BaseNettyHandler {
 
-  protected FullHttpResponse createResponse(HttpResponseStatus status, String content) {
+  public FullHttpResponse createResponse(HttpResponseStatus status, String content) {
     ByteBuf buffer = Unpooled.copiedBuffer(content, StandardCharsets.UTF_8);
     FullHttpResponse response = new DefaultFullHttpResponse(
         HttpVersion.HTTP_1_1, status, buffer
