@@ -1,9 +1,9 @@
 package com.mipt.controller;
 
 public enum UserRole {
-  ADMIN("admin"),
   READER("reader"),
-  WRITER("writer");
+  WRITER("writer"),
+  ADMIN("admin");
 
   private final String value;
 
@@ -15,30 +15,27 @@ public enum UserRole {
     return value;
   }
 
-  // Преобразование из строки в enum
-  public static UserRole fromString(String value) {
-    if (value == null) return null;
+  public static UserRole fromString(String role) {
+    if (role == null) return null;
 
-    for (UserRole role : UserRole.values()) {
-      if (role.value.equalsIgnoreCase(value)) {
-        return role;
+    for (UserRole userRole : UserRole.values()) {
+      if (userRole.getValue().equals(role.toLowerCase())) {
+        return userRole;
       }
     }
     return null;
   }
 
-  // Проверка существования роли
-  public static boolean isValid(String value) {
-    return fromString(value) != null;
+  public static boolean isValid(String role) {
+    return fromString(role) != null;
   }
 
-  // Получение всех допустимых значений
   public static String[] getAllValues() {
     UserRole[] roles = values();
-    String[] result = new String[roles.length];
+    String[] values = new String[roles.length];
     for (int i = 0; i < roles.length; i++) {
-      result[i] = roles[i].getValue();
+      values[i] = roles[i].getValue();
     }
-    return result;
+    return values;
   }
 }

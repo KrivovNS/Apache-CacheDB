@@ -1,20 +1,21 @@
 package com.mipt.controller;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class ValidationResult {
-  private boolean valid;
-  private List<String> errors;
+  private boolean valid = true;
+  private List<String> errors = new ArrayList<>();
 
   public ValidationResult() {
   }
 
   public boolean getValid() {
-    return this.valid;
+    return this.valid && errors.isEmpty();
   }
 
   public String getErrors() {
-    return String.join(";", errors);
+    return String.join("; ", errors);
   }
 
   public void setValid(boolean valid) {
