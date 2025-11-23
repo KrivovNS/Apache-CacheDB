@@ -39,7 +39,7 @@ public class DataTypeValidator {
       // Проверка Base64
       java.util.Base64.getDecoder().decode(data);
       return true;
-    } catch (IllegalArgumentException e) {
+    } catch (IllegalArgumentException e) { // Log.error();
       return false;
     }
   }

@@ -1,6 +1,6 @@
 package com.mipt.controller;
 
-import com.mipt.cache.Cache;
+import com.mipt.cache.CacheResult;
 import com.mipt.service.CacheStorageService;
 import com.mipt.userstorage.dao.*;
 import com.mipt.userstorage.model.User;
@@ -134,7 +134,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
           break;
       }
     } catch (Exception e) {
-      System.err.println("Error processing storage request: " + e.getMessage());
+      System.err.println("Error processing storage request: " + e.getMessage()); // TODO: Log.error();
       response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
           "Server error: " + e.getMessage());
     }
@@ -144,7 +144,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
   private FullHttpResponse handleCacheGet(String storageToken, String type, String key) {
     try {
-      com.mipt.cache.CacheResult result = cacheService.readData(storageToken, type, key);
+      CacheResult result = cacheService.readData(storageToken, type, key);
 
       if (!result.isSuccess()) {
         return createResponse(HttpResponseStatus.NOT_FOUND, result.getMessage());
