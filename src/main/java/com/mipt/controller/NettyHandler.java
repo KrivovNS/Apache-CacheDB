@@ -49,6 +49,12 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     String content = request.content().toString(CharsetUtil.UTF_8);
 
+    ValidationResult validation = validator.validateRequest(method, uri);
+    if (!validation.getValid()) {
+      sendBadRequest(ctx, validation.getErrors());
+      return;
+    }
+
     // Обработка запросов к кэшу
     if (uri.startsWith("/cache")) {
       handleCacheRequest(ctx, method, uri, content);
@@ -62,12 +68,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   }
 
   private void handleCacheRequest(ChannelHandlerContext ctx, String method, String uri, String content) {
-    ValidationResult validation = validator.validateRequest(method, uri);
-    if (!validation.getValid()) {
-      sendBadRequest(ctx, validation.getErrors());
-      return;
-    }
-
     // Парсим параметры из URI
     Map<String, String> params = parseUri(uri);
     String sessionToken = params.get("session_token");

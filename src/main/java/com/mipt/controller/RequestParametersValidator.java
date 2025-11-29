@@ -62,12 +62,20 @@ public class RequestParametersValidator {
     // Проверка на лишние параметры
     validateNoExtraParams(result, params, allowedParams, method + " cache");
 
-    // Проверка на единственность значений
-    validateSingleValueParams(result, params, allowedParams);
+    if (!result.getValid()) {
+      return;
+    }
 
     // Обязательные параметры
     for (String requiredParam : allowedParams) {
       validateRequiredParam(result, params, requiredParam);
+    }
+
+    // Проверка на единственность значений
+    validateSingleValueParams(result, params, allowedParams);
+
+    if (!result.getValid()) {
+      return;
     }
 
     // Проверка типа данных
@@ -111,12 +119,21 @@ public class RequestParametersValidator {
     // Проверка на лишние параметры
     validateNoExtraParams(result, params, allowedParams, method + " storage");
 
+    if (!result.getValid()) {
+      return;
+    }
+
+    // Обязательные параметры
+    for (String requiredParam : allowedParams) {
+      validateRequiredParam(result, params, requiredParam);
+    }
+
     // Проверка на единственность значений
     validateSingleValueParams(result, params, allowedParams);
 
-    // Обязательные параметры
-    validateRequiredParam(result, params, "login");
-    validateRequiredParam(result, params, "password");
+    if (!result.getValid()) {
+      return;
+    }
 
     // Проверка длины параметров
     validateStringLength(result, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
