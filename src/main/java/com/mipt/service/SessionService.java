@@ -10,6 +10,7 @@ public class SessionService {
   private final CacheStorageService cacheStorageService;
   private final Map<String, Session> activeSessions; // sessionToken -> Session
   private static final long SESSION_TTL_HOURS = 24;
+  private static long TEST_TTL_MINUTES = 1; // 1 минута для тестов
 
   public SessionService(CacheStorageService cacheStorageService) {
     this.cacheStorageService = cacheStorageService;
@@ -78,7 +79,13 @@ public class SessionService {
    * Проверяет валидность сессии
    */
   public boolean isSessionValid(String sessionToken) {
-    return getValidSession(sessionToken).isPresent();
+    Session session = activeSessions.get(sessionToken);
+    if (session != null) {
+      // Используем тестовый TTL если он установлен
+      long ttl = (TEST_TTL_MINUTES > 0) ? TEST_TTL_MINUTES : SESSION_TTL_HOURS * 60;
+      return session.isValid(ttl);
+    }
+    return false;
   }
 
   /**
@@ -89,23 +96,13 @@ public class SessionService {
   }
 
   /**
-   * Удаляет сессию
-   */
-  public void removeSession(String sessionToken) {
-    activeSessions.remove(sessionToken);
-    cacheStorageService.unregisterSession(sessionToken);
-  }
-
-  /**
    * Очищает просроченные сессии и соответствующие хранилища
    * @return количество удаленных сессий
    */
   public int cleanupExpiredSessions() {
     int removedCount = 0;
-    for (Map.Entry<String, Session> entry : activeSessions.entrySet()) {
-      String sessionToken = entry.getKey();
-      Session session = entry.getValue();
-      if (!session.isValid(SESSION_TTL_HOURS)) {
+    for (String sessionToken : activeSessions.keySet()) {
+      if (!isSessionValid(sessionToken)) {
         activeSessions.remove(sessionToken);
         cacheStorageService.unregisterSession(sessionToken);
         removedCount++;

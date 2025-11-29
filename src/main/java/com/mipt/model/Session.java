@@ -36,8 +36,8 @@ public class Session {
   /**
    * Проверяет валидность сессии
    */
-  public boolean isValid(long ttlHours) {
-    Instant expirationTime = createdAt.plus(ttlHours, ChronoUnit.HOURS);
+  public boolean isValid(long ttlMinutes) {
+    Instant expirationTime = createdAt.plus(ttlMinutes, ChronoUnit.MINUTES);
     return Instant.now().isBefore(expirationTime);
   }
 
