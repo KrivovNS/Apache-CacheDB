@@ -2,6 +2,7 @@ package com.mipt.cache;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 public class SimpleCache implements Cache {
   private final Map<Object, Object> storage;
@@ -41,5 +42,10 @@ public class SimpleCache implements Cache {
   @Override
   public boolean containsKey(Object key) {
     return storage.containsKey(key);
+  }
+
+  @Override
+  public Set<Object> getKeys() {
+    return storage.keySet();
   }
 }

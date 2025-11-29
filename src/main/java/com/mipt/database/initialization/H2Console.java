@@ -1,4 +1,4 @@
-package com.mipt.userstorage.database;
+package com.mipt.database.initialization;
 
 import org.h2.tools.Server;
 import java.sql.SQLException;

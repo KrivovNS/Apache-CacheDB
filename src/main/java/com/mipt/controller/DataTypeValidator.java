@@ -12,16 +12,11 @@ public class DataTypeValidator {
       return false;
     }
 
-    switch (dataType) {
-      case JSON:
-        return isValidJSON(data);
-      case BYTES:
-        return isValidBase64(data);
-      case STRING:
-        return true;
-      default:
-        return false;
-    }
+    return switch (dataType) {
+      case JSON -> isValidJSON(data);
+      case BYTES -> isValidBase64(data);
+      case STRING -> true;
+    };
   }
 
   public static boolean isValidJSON(String data) {

@@ -1,5 +1,6 @@
 package com.mipt.cache;
 
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
@@ -41,5 +42,10 @@ public class ConcurrentCache implements Cache {
   @Override
   public boolean containsKey(Object key) {
     return storage.containsKey(key);
+  }
+
+  @Override
+  public Set<Object> getKeys() {
+    return storage.keySet();
   }
 }
