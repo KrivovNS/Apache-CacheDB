@@ -1,10 +1,19 @@
-package com.mipt.cache;
+package com.mipt.model;
 
+import com.mipt.cache.Cache;
+import com.mipt.cache.CacheResult;
+import com.mipt.cache.LRUCache;
+import com.mipt.controller.DataType;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class CacheStorage {
-  private final Map<String, LRUCache> typeCaches;
+
+  private Long id;
+  private String storageToken;
+
+  private final Map<DataType, LRUCache> typeCaches;
   private final int defaultCapacity;
 
   public CacheStorage(int defaultCapacity) {
@@ -16,11 +25,17 @@ public class CacheStorage {
     this(1000);
   }
 
-  private LRUCache getOrCreateTypeCache(String type) {
+  public CacheStorage(Long id, String storageToken, int defaultCapacity) {
+    this(defaultCapacity);
+    this.id = id;
+    this.storageToken = storageToken;
+  }
+
+  private LRUCache getOrCreateTypeCache(DataType type) {
     return typeCaches.computeIfAbsent(type, k -> new LRUCache(defaultCapacity));
   }
 
-  public CacheResult read(String type, String key) {
+  public CacheResult read(DataType type, String key) {
     try {
       LRUCache typeCache = typeCaches.get(type);
       if (typeCache == null) {
@@ -38,7 +53,7 @@ public class CacheStorage {
     }
   }
 
-  public CacheResult insert(String type, String key, Object value) {
+  public CacheResult post(DataType type, String key, Object value) {
     try {
       LRUCache typeCache = getOrCreateTypeCache(type);
 
@@ -53,7 +68,7 @@ public class CacheStorage {
     }
   }
 
-  public CacheResult put(String type, String key, Object value) {
+  public CacheResult put(DataType type, String key, Object value) {
     try {
       LRUCache typeCache = getOrCreateTypeCache(type);
       typeCache.put(key, value);
@@ -63,7 +78,7 @@ public class CacheStorage {
     }
   }
 
-  public CacheResult delete(String type, String key) {
+  public CacheResult delete(DataType type, String key) {
     try {
       LRUCache typeCache = typeCaches.get(type);
       if (typeCache == null) {
@@ -81,11 +96,28 @@ public class CacheStorage {
     }
   }
 
-  public Map<String, Integer> getStats() {
-    Map<String, Integer> stats = new ConcurrentHashMap<>();
-    typeCaches.forEach((type, cache) -> {
-      stats.put(type, cache.size());
-    });
-    return stats;
+  // Геттеры и сеттеры
+  public Long getId() {
+    return id;
+  }
+
+  public void setId(Long id) {
+    this.id = id;
+  }
+
+  public String getStorageToken() {
+    return storageToken;
+  }
+
+  public void setStorageToken(String storageToken) {
+    this.storageToken = storageToken;
+  }
+
+  public Set<DataType> getCacheTypes() {
+    return typeCaches.keySet();
+  }
+
+  public Cache getCacheByType(DataType type) {
+    return typeCaches.get(type);
   }
 }

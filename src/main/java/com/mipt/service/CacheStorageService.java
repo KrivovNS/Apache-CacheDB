@@ -1,148 +1,102 @@
 package com.mipt.service;
 
-import com.mipt.cache.Cache;
-import com.mipt.cache.LRUCache;
+import static com.mipt.service.TokenGenerators.generateStorageToken;
+
 import com.mipt.cache.CacheResult;
-import com.mipt.userstorage.dao.CacheStorageDAO;
-import com.mipt.userstorage.model.CacheStorageEntity;
+import com.mipt.controller.DataType;
+import com.mipt.database.dao.CacheStorageDAO;
+import com.mipt.model.CacheStorage;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.security.SecureRandom;
-import java.util.Base64;
 
 public class CacheStorageService {
   private final CacheStorageDAO cacheStorageDAO;
-  private final Map<String, Map<String, Cache>> storageCaches; // storageToken -> (type -> cache)
+  private final Map<String, CacheStorage> sessionStorages; // sessionToken -> CacheStorage
 
   public CacheStorageService(CacheStorageDAO cacheStorageDAO) {
     this.cacheStorageDAO = cacheStorageDAO;
-    this.storageCaches = new ConcurrentHashMap<>();
-    initializeCaches();
+    this.sessionStorages = new ConcurrentHashMap<>();
   }
 
-  private void initializeCaches() {
-    for (CacheStorageEntity entity : cacheStorageDAO.findAll()) {
-      createStorageCaches(entity.getStorageToken());
+  /**
+   * Регистрирует сессию с хранилищем
+   */
+  public void registerSession(String sessionToken, CacheStorage storage) {
+    sessionStorages.put(sessionToken, storage);
+  }
+
+  /**
+   * Удаляет хранилище сессии и сохраняет данные в БД
+   */
+  public void unregisterSession(String sessionToken) {
+    CacheStorage storage = sessionStorages.remove(sessionToken);
+    if (storage != null) {
+      cacheStorageDAO.saveDataFromCacheInDatabase(storage);
     }
   }
 
-  public String createStorageCaches(String storageToken) {
-    Map<String, Cache> typeCaches = new ConcurrentHashMap<>();
-    typeCaches.put("json", new LRUCache(1000));
-    typeCaches.put("byte[]", new LRUCache(1000));
-    typeCaches.put("string", new LRUCache(1000));
-    storageCaches.put(storageToken, typeCaches);
-    return storageToken;
+  /**
+   * Создает новое хранилище и возвращает его
+   */
+  public CacheStorage createNewStorage() {
+    String storageToken = generateStorageToken(32);
+    CacheStorage storage = new CacheStorage(1000);
+    storage.setStorageToken(storageToken);
+    return storage;
   }
 
-  public String createNewStorage() {
-    String storageToken = generateSecureToken();
-    return createStorageCaches(storageToken);
-  }
-
-  private String generateSecureToken() {
-    SecureRandom secureRandom = new SecureRandom();
-    byte[] tokenBytes = new byte[32];
-    secureRandom.nextBytes(tokenBytes);
-    return Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
-  }
-
-
-
-  public CacheResult readData(String storageToken, String dataType, String key) {
-    try {
-      Map<String, Cache> typeCaches = storageCaches.get(storageToken);
-      if (typeCaches == null) {
-        return CacheResult.error("Storage " + storageToken + " not found");
-      }
-
-      Cache cache = typeCaches.get(dataType.toLowerCase());
-      if (cache == null) {
-        return CacheResult.error("Data type " + dataType + " not supported");
-      }
-
-      Object value = cache.get(key);
-      if (value == null) {
-        return CacheResult.error("Key " + key + " not found");
-      }
-
-      return CacheResult.success(value);
-    } catch (Exception e) {
-      return CacheResult.error("Error reading data: " + e.getMessage());
+  /**
+   * Загружает существующее хранилище из БД
+   */
+  public CacheStorage loadStorage(String storageToken) {
+    CacheStorage storage = cacheStorageDAO.loadDataFromDatabaseByToken(storageToken);
+    if (storage == null) {
+      // Если не найдено в БД, создаем новое
+      storage = new CacheStorage(1000);
+      storage.setStorageToken(storageToken);
     }
+    return storage;
   }
 
-  public CacheResult insertData(String storageToken, String dataType, String key, String value) {
-    try {
-      Map<String, Cache> typeCaches = storageCaches.get(storageToken);
-      if (typeCaches == null) {
-        return CacheResult.error("Storage " + storageToken + " not found");
-      }
-
-      Cache cache = typeCaches.get(dataType.toLowerCase());
-      if (cache == null) {
-        return CacheResult.error("Data type " + dataType + " not supported");
-      }
-
-      if (cache.containsKey(key)) {
-        return CacheResult.error("Key " + key + " already exists");
-      }
-
-      cache.put(key, value);
-      return CacheResult.success("Data inserted successfully");
-    } catch (Exception e) {
-      return CacheResult.error("Error inserting data: " + e.getMessage());
-    }
+  /**
+   * CRUD операции - работают только с зарегистрированными сессиями
+   */
+  public CacheResult readData(String sessionToken, DataType dataType, String key) {
+    return getStorageBySession(sessionToken)
+        .map(storage -> storage.read(dataType, key))
+        .orElse(CacheResult.error("Invalid session"));
   }
 
-  public CacheResult updateData(String storageToken, String dataType, String key, String value) {
-    try {
-      Map<String, Cache> typeCaches = storageCaches.get(storageToken);
-      if (typeCaches == null) {
-        return CacheResult.error("Storage " + storageToken + " not found");
-      }
-
-      Cache cache = typeCaches.get(dataType.toLowerCase());
-      if (cache == null) {
-        return CacheResult.error("Data type " + dataType + " not supported");
-      }
-
-      cache.put(key, value);
-      return CacheResult.success("Data updated successfully");
-    } catch (Exception e) {
-      return CacheResult.error("Error updating data: " + e.getMessage());
-    }
+  public CacheResult insertData(String sessionToken, DataType dataType, String key, Object value) {
+    return getStorageBySession(sessionToken)
+        .map(storage -> storage.post(dataType, key, value))
+        .orElse(CacheResult.error("Invalid session"));
   }
 
-  public CacheResult deleteData(String storageToken, String dataType, String key) {
-    try {
-      Map<String, Cache> typeCaches = storageCaches.get(storageToken);
-      if (typeCaches == null) {
-        return CacheResult.error("Storage " + storageToken + " not found");
-      }
-
-      Cache cache = typeCaches.get(dataType.toLowerCase());
-      if (cache == null) {
-        return CacheResult.error("Data type " + dataType + " not supported");
-      }
-
-      if (!cache.containsKey(key)) {
-        return CacheResult.error("Key " + key + " not found");
-      }
-
-      cache.remove(key);
-      return CacheResult.success("Data deleted successfully");
-    } catch (Exception e) {
-      return CacheResult.error("Error deleting data: " + e.getMessage());
-    }
+  public CacheResult updateData(String sessionToken, DataType dataType, String key, Object value) {
+    return getStorageBySession(sessionToken)
+        .map(storage -> storage.put(dataType, key, value))
+        .orElse(CacheResult.error("Invalid session"));
   }
 
-  public boolean storageExists(String storageToken) {
-    return storageCaches.containsKey(storageToken);
+  public CacheResult deleteData(String sessionToken, DataType dataType, String key) {
+    return getStorageBySession(sessionToken)
+        .map(storage -> storage.delete(dataType, key))
+        .orElse(CacheResult.error("Invalid session"));
   }
 
-  public Cache getCache(String storageToken, String dataType) {
-    Map<String, Cache> typeCaches = storageCaches.get(storageToken);
-    return typeCaches != null ? typeCaches.get(dataType.toLowerCase()) : null;
+  /**
+   * Получает хранилище по токену сессии
+   */
+  public Optional<CacheStorage> getStorageBySession(String sessionToken) {
+    return Optional.ofNullable(sessionStorages.get(sessionToken));
+  }
+
+  /**
+   * Получает количество активных сессионных хранилищ
+   */
+  public int getActiveSessionStoragesCount() {
+    return sessionStorages.size();
   }
 }

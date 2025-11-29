@@ -1,4 +1,4 @@
-package com.mipt.userstorage.database;
+package com.mipt.database.initialization;
 
 import java.sql.Connection;
 import java.sql.DriverManager;

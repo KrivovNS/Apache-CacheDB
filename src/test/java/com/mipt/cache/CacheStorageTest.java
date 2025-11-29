@@ -1,5 +1,6 @@
 package com.mipt.cache;
 
+import com.mipt.model.CacheStorage;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 

@@ -1,9 +1,12 @@
 package com.mipt;
 
-import com.mipt.userstorage.database.DatabaseInitializer;
-import com.mipt.userstorage.dao.*;
+import com.mipt.database.initialization.DatabaseInitializer;
+import com.mipt.database.dao.*;
 import com.mipt.server.NettyHttpServer;
 import com.mipt.service.CacheStorageService;
+import com.mipt.service.SessionService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class Main {
   public static void main(String[] args) {
@@ -15,15 +18,24 @@ public class Main {
       // 2. Инициализируем DAO
       UserDAO userDAO = new UserDAO();
       CacheStorageDAO cacheStorageDAO = new CacheStorageDAO();
-      PermissionDAO permissionDAO = new PermissionDAO();
 
-      // 3. Инициализируем сервис кэшей
+      // 3. Инициализируем сервисы
       CacheStorageService cacheService = new CacheStorageService(cacheStorageDAO);
+      SessionService sessionService = new SessionService(cacheService);
 
-      // 4. Запускаем Netty HTTP сервер
+      // 4. Запускаем очистку сессий каждую минуту
+      Executors.newScheduledThreadPool(1)
+          .scheduleAtFixedRate(() -> {
+            int removedSessions = sessionService.cleanupExpiredSessions();
+            if (removedSessions > 0) {
+              System.out.println("Cleanup: " + removedSessions + " expired sessions removed");
+            }
+          }, 1, 1, TimeUnit.MINUTES);
+
+      // 5. Запускаем Netty HTTP сервер
       int port = 8080;
       NettyHttpServer server = new NettyHttpServer(
-          port, cacheService, userDAO, permissionDAO, cacheStorageDAO
+          port, cacheService, sessionService, userDAO, cacheStorageDAO
       );
 
       server.run();
@@ -32,7 +44,7 @@ public class Main {
       System.err.println("Failed to start application: " + e.getMessage());
       e.printStackTrace();
     } finally {
-      com.mipt.userstorage.database.DatabaseConnection.closeConnection();
+      com.mipt.database.initialization.DatabaseConnection.closeConnection();
     }
   }
 }

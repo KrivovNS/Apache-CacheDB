@@ -1,5 +1,7 @@
 package com.mipt.cache;
 
+import java.util.Set;
+
 public interface Cache {
   void put(Object key, Object value);
   Object get(Object key);
@@ -7,4 +9,5 @@ public interface Cache {
   void clear();
   int size();
   boolean containsKey(Object key);
+  Set<Object> getKeys();
 }
