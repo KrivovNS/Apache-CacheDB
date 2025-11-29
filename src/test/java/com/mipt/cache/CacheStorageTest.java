@@ -12,7 +12,7 @@ class CacheStorageTest {
     CacheStorage storage = new CacheStorage();
 
     // Insert
-    storage.put(DataType.STRING, "key1", "value1");
+    storage.post(DataType.STRING, "key1", "value1");
 
     // Check exists
     var readResult = storage.read(DataType.STRING, "key1");
