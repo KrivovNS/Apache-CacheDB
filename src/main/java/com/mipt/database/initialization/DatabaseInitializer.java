@@ -27,9 +27,9 @@ public class DatabaseInitializer {
         stmt.execute(sql);
       }
 
-      for (String sql : insertData) {
-        stmt.execute(sql);
-      }
+//      for (String sql : insertData) {
+//        stmt.execute(sql);
+//      }
 
       System.out.println("Database initialized successfully!");
 

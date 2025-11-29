@@ -92,11 +92,4 @@ public class CacheStorageService {
   public Optional<CacheStorage> getStorageBySession(String sessionToken) {
     return Optional.ofNullable(sessionStorages.get(sessionToken));
   }
-
-  /**
-   * Получает количество активных сессионных хранилищ
-   */
-  public int getActiveSessionStoragesCount() {
-    return sessionStorages.size();
-  }
 }
