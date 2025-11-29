@@ -71,6 +71,9 @@ public class CacheStorage {
   public CacheResult put(DataType type, String key, Object value) {
     try {
       LRUCache typeCache = getOrCreateTypeCache(type);
+      if (!typeCache.containsKey(key)) {
+        return CacheResult.error("No value by key: " + key);
+      }
       typeCache.put(key, value);
       return CacheResult.success("Put successfully");
     } catch (Exception e) {
