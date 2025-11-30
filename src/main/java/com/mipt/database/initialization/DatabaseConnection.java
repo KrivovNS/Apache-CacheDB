@@ -3,8 +3,12 @@ package com.mipt.database.initialization;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import com.mipt.util.AppLogger;
 
 public class DatabaseConnection {
+
+  private static final AppLogger log = AppLogger.getLogger(DatabaseConnection.class);
+
   private static Connection connection;
 
   public static Connection getConnection() throws SQLException {
@@ -15,20 +19,20 @@ public class DatabaseConnection {
         String username = "sa";
         String password = "password";
 
-        System.out.println("Connecting to database: " + url);
+        log.info("Connecting to database: " + url);
 
         // Создаем папку data если её нет
         try {
           java.nio.file.Files.createDirectories(java.nio.file.Paths.get("./data"));
         } catch (Exception e) {
-          System.err.println("Warning: Could not create data directory: " + e.getMessage());
+          log.warn("Could not create data directory: " + e.getMessage());
         }
 
         connection = DriverManager.getConnection(url, username, password);
-        System.out.println("Database connected successfully!");
+        log.info("Database connected successfully!");
 
       } catch (Exception e) {
-        System.err.println("Connection failed: " + e.getMessage());
+        log.error("Connection failed", e);
         throw new SQLException("Failed to connect to database", e);
       }
     }
@@ -39,9 +43,9 @@ public class DatabaseConnection {
     if (connection != null) {
       try {
         connection.close();
-        System.out.println("Database connection closed");
+        log.info("Database connection closed");
       } catch (SQLException e) {
-        e.printStackTrace();
+        log.error("Error closing database connection", e);
       }
     }
   }

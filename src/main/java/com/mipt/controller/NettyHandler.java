@@ -11,12 +11,14 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.*;
 import io.netty.util.CharsetUtil;
-
+import com.mipt.util.AppLogger;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
 public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
+
+  private static final AppLogger log = AppLogger.getLogger(NettyHandler.class);
 
   private final CacheStorageService cacheService;
   private final SessionService sessionService;
@@ -40,7 +42,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     String method = request.method().name();
     String uri = request.uri();
 
-    System.out.println("Received " + method + " request: " + uri);
+    log.info("Received " + method + " request: " + uri);
 
     if ("/".equals(uri)) {
       sendInfoPage(ctx);
@@ -99,7 +101,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         default -> createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED, "Method not allowed");
       };
     } catch (Exception e) {
-      System.err.println("Error processing cache request: " + e.getMessage());
+      log.error("Error processing cache request", e);
       response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
           "Server error: " + e.getMessage());
     }
@@ -119,7 +121,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED, "Method not allowed");
       }
     } catch (Exception e) {
-      System.err.println("Error processing storage request: " + e.getMessage());
+      log.error("Error processing storage request", e);
       response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
           "Server error: " + e.getMessage());
     }
@@ -314,8 +316,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
   @Override
   public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-    System.err.println("Error processing request: " + cause.getMessage());
-    cause.printStackTrace();
+    log.error("Error processing request", cause);
 
     FullHttpResponse errorResponse = createResponse(
         HttpResponseStatus.INTERNAL_SERVER_ERROR,

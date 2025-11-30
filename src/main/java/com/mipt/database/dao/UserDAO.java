@@ -3,8 +3,12 @@ package com.mipt.database.dao;
 import com.mipt.database.initialization.DatabaseConnection;
 import com.mipt.model.User;
 import java.sql.*;
+import com.mipt.util.AppLogger;
+
 
 public class UserDAO {
+
+  private static final AppLogger log = AppLogger.getLogger(UserDAO.class);
 
   public User findByUsername(String username) {
     String sql = "SELECT id, username, password, storage_token FROM users WHERE username = ?";
@@ -25,8 +29,7 @@ public class UserDAO {
       }
 
     } catch (SQLException e) {
-      System.err.println("Error finding user by username: " + e.getMessage());
-      e.printStackTrace();
+      log.error("Error finding user by username", e);
     }
 
     return null;
@@ -63,8 +66,7 @@ public class UserDAO {
       }
 
     } catch (SQLException e) {
-      System.err.println("Error creating user: " + e.getMessage());
-      e.printStackTrace();
+      log.error("Error creating user", e);
       return null;
     }
   }
@@ -86,8 +88,7 @@ public class UserDAO {
       }
 
     } catch (SQLException e) {
-      System.err.println("Error checking storage token: " + e.getMessage());
-      e.printStackTrace();
+      log.error("Error checking storage token", e);
     }
 
     return false;
@@ -115,8 +116,7 @@ public class UserDAO {
       }
 
     } catch (SQLException e) {
-      System.err.println("Error finding user by storage token: " + e.getMessage());
-      e.printStackTrace();
+      log.error("Error finding user by storage token", e);
     }
 
     return null;

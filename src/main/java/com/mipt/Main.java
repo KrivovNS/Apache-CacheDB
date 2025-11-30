@@ -7,12 +7,16 @@ import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import com.mipt.util.AppLogger;
 
 public class Main {
+
+  private static final AppLogger log = AppLogger.getLogger(Main.class);
+
   public static void main(String[] args) {
     try {
       // 1. Инициализируем базу данных
-      System.out.println("Initializing database...");
+      log.info("Initializing database...");
       DatabaseInitializer.initializeDatabase();
 
       // 2. Инициализируем DAO
@@ -28,7 +32,7 @@ public class Main {
           .scheduleAtFixedRate(() -> {
             int removedSessions = sessionService.cleanupExpiredSessions();
             if (removedSessions > 0) {
-              System.out.println("Cleanup: " + removedSessions + " expired sessions removed");
+              log.info("Cleanup: " + removedSessions + " expired sessions removed");
             }
           }, 1, 1, TimeUnit.MINUTES);
 
@@ -41,8 +45,7 @@ public class Main {
       server.run();
 
     } catch (Exception e) {
-      System.err.println("Failed to start application: " + e.getMessage());
-      e.printStackTrace();
+      log.error("Failed to start application", e);
     } finally {
       com.mipt.database.initialization.DatabaseConnection.closeConnection();
     }
