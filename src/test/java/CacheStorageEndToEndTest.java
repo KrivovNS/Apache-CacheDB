@@ -127,7 +127,6 @@ public class CacheStorageEndToEndTest {
 
   private void testBytesOperations(String sessionToken) throws Exception {
     String key = "bytes_key" + java.util.UUID.randomUUID().toString().substring(0, 8);
-    ;
     String validBase64 = "SGVsbG8gV29ybGQ=";
     String invalidBase64 = "invalid base64!!";
 
@@ -221,7 +220,6 @@ public class CacheStorageEndToEndTest {
                   }
                 }
               }
-
               @Override
               public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
                 future.completeExceptionally(cause);
@@ -265,7 +263,7 @@ public class CacheStorageEndToEndTest {
 
   @Test
   void testUserAuthentication() throws Exception {
-    // Тестируем создание нового пользователя
+    // Tестируем создание нового пользователя
     String sessionToken1 = createStorageAndGetSession("newuser", "password123");
     assertNotNull(sessionToken1);
 
