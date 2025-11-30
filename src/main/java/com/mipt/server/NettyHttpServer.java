@@ -13,6 +13,9 @@ import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
+import com.mipt.util.AppLogger;
+
+
 
 public class NettyHttpServer {
   private final int port;
@@ -20,6 +23,7 @@ public class NettyHttpServer {
   private final SessionService sessionService;
   private final UserDAO userDAO;
   private final CacheStorageDAO cacheStorageDAO;
+  private static final AppLogger log = AppLogger.getLogger(NettyHttpServer.class);
 
   public NettyHttpServer(int port,
       CacheStorageService cacheService,
@@ -56,7 +60,7 @@ public class NettyHttpServer {
           .childOption(ChannelOption.SO_KEEPALIVE, true);
 
       ChannelFuture f = b.bind(port).sync();
-      System.out.println("Netty HTTP Server started on port " + port);
+      log.info("Netty HTTP Server started on port " + port);
 
       f.channel().closeFuture().sync();
 

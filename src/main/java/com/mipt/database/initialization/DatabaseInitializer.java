@@ -2,8 +2,12 @@ package com.mipt.database.initialization;
 
 import java.sql.Connection;
 import java.sql.Statement;
+import com.mipt.util.AppLogger;
+
 
 public class DatabaseInitializer {
+
+  private static final AppLogger log = AppLogger.getLogger(DatabaseInitializer.class);
 
   public static void initializeDatabase() {
     String[] createTables = {
@@ -31,11 +35,10 @@ public class DatabaseInitializer {
 //        stmt.execute(sql);
 //      }
 
-      System.out.println("Database initialized successfully!");
+      log.info("Database initialized successfully!");
 
     } catch (Exception e) {
-      System.err.println("Error initializing database: " + e.getMessage());
-      e.printStackTrace();
+      log.error("Error initializing database", e);
     }
   }
 }
