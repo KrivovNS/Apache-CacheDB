@@ -1,6 +1,11 @@
 package com.mipt.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+
 public class DataTypeValidator {
+
+  private static final ObjectMapper objectMapper = new ObjectMapper();
 
   public static boolean validateDataByType(String data, String type) {
     if (data == null || data.trim().isEmpty()) {
@@ -19,26 +24,30 @@ public class DataTypeValidator {
     };
   }
 
+  /**
+   * Проверяет валидность JSON с помощью ObjectMapper
+   */
   public static boolean isValidJSON(String data) {
     try {
-      String trimmed = data.trim();
-      return (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-          (trimmed.startsWith("[") && trimmed.endsWith("]"));
-    } catch (Exception e) {
+      objectMapper.readTree(data);
+      return true;
+    } catch (JsonProcessingException e) {
       return false;
     }
   }
 
   public static boolean isValidBase64(String data) {
     try {
-      // Проверка Base64
       java.util.Base64.getDecoder().decode(data);
       return true;
-    } catch (IllegalArgumentException e) { // Log.error();
+    } catch (IllegalArgumentException e) {
       return false;
     }
   }
 
+  /**
+   * Преобразует данные для хранения в соответствующий тип
+   */
   public static Object processDataForStorage(String data, String type) {
     DataType dataType = DataType.fromString(type);
     if (dataType == null) {
@@ -53,10 +62,12 @@ public class DataTypeValidator {
           throw new IllegalArgumentException("Invalid Base64 data: " + e.getMessage());
         }
       case JSON:
-        if (!isValidJSON(data)) {
-          throw new IllegalArgumentException("Invalid JSON format");
+        try {
+          objectMapper.readTree(data);
+          return data;
+        } catch (JsonProcessingException e) {
+          throw new IllegalArgumentException("Invalid JSON format: " + e.getMessage());
         }
-        return data;
       case STRING:
         return data;
       default:
@@ -64,6 +75,9 @@ public class DataTypeValidator {
     }
   }
 
+  /**
+   * Форматирует данные для ответа
+   */
   public static String formatDataForResponse(Object data, String type) {
     if (data == null) {
       return "";
@@ -88,6 +102,13 @@ public class DataTypeValidator {
           return data.toString();
 
         case JSON:
+          if (data instanceof String) {
+            String jsonData = (String) data;
+            objectMapper.readTree(jsonData);
+            return jsonData;
+          }
+          return data.toString();
+
         case STRING:
         default:
           return data.toString();
