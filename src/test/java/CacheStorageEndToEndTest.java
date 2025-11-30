@@ -10,6 +10,7 @@ import io.netty.handler.codec.http.*;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import com.mipt.Main;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -23,16 +24,38 @@ public class CacheStorageEndToEndTest {
   private static final String HOST = "localhost";
   private static final int PORT = 8080;
   private static EventLoopGroup group;
+  private static volatile Thread serverThread;
 
   @BeforeAll
   static void setUp() {
     group = new NioEventLoopGroup();
+
+    // Запускаем сервер в отдельном потоке
+    serverThread = new Thread(() -> {
+      try {
+        Main.main(new String[]{});
+      } catch (Exception e) {
+        e.printStackTrace();
+      }
+    });
+    serverThread.setDaemon(true);
+    serverThread.start();
+
+    // Даем серверу время на запуск
+    try {
+      Thread.sleep(3000);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   @AfterAll
   static void tearDown() {
     if (group != null) {
       group.shutdownGracefully();
+    }
+    if (serverThread != null && serverThread.isAlive()) {
+      serverThread.interrupt();
     }
   }
 
@@ -220,6 +243,7 @@ public class CacheStorageEndToEndTest {
                   }
                 }
               }
+
               @Override
               public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
                 future.completeExceptionally(cause);
