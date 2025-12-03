@@ -3,12 +3,12 @@ package com.mipt.database.dao;
 import com.mipt.database.initialization.DatabaseConnection;
 import com.mipt.model.User;
 import java.sql.*;
-import com.mipt.util.AppLogger;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class UserDAO {
 
-  private static final AppLogger log = AppLogger.getLogger(UserDAO.class);
+  private static final Logger log = LoggerFactory.getLogger(UserDAO.class);
 
   public User findByUsername(String username) {
     String sql = "SELECT id, username, password, storage_token FROM users WHERE username = ?";
@@ -29,7 +29,7 @@ public class UserDAO {
       }
 
     } catch (SQLException e) {
-      log.error("Error finding user by username", e);
+      log.error("Error finding user by username: {}", username, e);
     }
 
     return null;
@@ -66,7 +66,7 @@ public class UserDAO {
       }
 
     } catch (SQLException e) {
-      log.error("Error creating user", e);
+      log.error("Error creating user with username: {}", username, e);
       return null;
     }
   }

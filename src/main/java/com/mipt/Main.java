@@ -7,11 +7,12 @@ import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import com.mipt.util.AppLogger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class Main {
 
-  private static final AppLogger log = AppLogger.getLogger(Main.class);
+  private static final Logger log = LoggerFactory.getLogger(Main.class);
 
   public static void main(String[] args) {
     try {
@@ -32,7 +33,7 @@ public class Main {
           .scheduleAtFixedRate(() -> {
             int removedSessions = sessionService.cleanupExpiredSessions();
             if (removedSessions > 0) {
-              log.info("Cleanup: " + removedSessions + " expired sessions removed");
+              log.info("Cleanup: {} expired sessions removed", removedSessions);
             }
           }, 1, 1, TimeUnit.MINUTES);
 

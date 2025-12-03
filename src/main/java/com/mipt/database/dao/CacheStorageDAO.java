@@ -7,14 +7,15 @@ import com.mipt.database.initialization.DatabaseConnection;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
-import com.mipt.util.AppLogger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CacheStorageDAO {
+
+  private static final Logger log = LoggerFactory.getLogger(CacheStorageDAO.class);
   /**
    * Метод для сохранения данных из кэша в БД
    */
-  private static final AppLogger log = AppLogger.getLogger(CacheStorageDAO.class);
-
   public void saveDataFromCacheInDatabase(CacheStorage cacheStorage) {
     if (cacheStorage == null) {
       throw new IllegalArgumentException("CacheStorage не может быть null");
@@ -39,7 +40,7 @@ public class CacheStorageDAO {
 
           // Пропускаем если кеш пустой
           if (cacheByData == null || cacheByData.size() == 0) {
-            log.info("Пропуск пустого кеша для типа: " + type);
+            log.info("Пропуск пустого кеша для типа: {}", type);
             continue;
           }
 
@@ -52,8 +53,8 @@ public class CacheStorageDAO {
           // 3. Вставляем данные из кеша
           int insertedRows = insertCacheData(conn, tableName, cacheByData, type);
 
-          log.info("Создана таблица и перенесено " + insertedRows +
-              " записей для типа: " + type + " в таблицу: " + tableName);
+          log.info("Создана таблица и перенесено {} записей для типа: {} в таблицу: {}",
+              insertedRows, type, tableName);
         }
 
         conn.commit();
@@ -91,7 +92,7 @@ public class CacheStorageDAO {
         if (dataType != null) {
           loadCacheDataFromTable(conn, tableName, dataType, storage);
         } else {
-          log.warn("Не удалось определить тип данных для таблицы: " + tableName);
+          log.warn("Не удалось определить тип данных для таблицы: {}", tableName);
         }
       }
 
@@ -115,7 +116,7 @@ public class CacheStorageDAO {
 
     try (Statement stmt = conn.createStatement()) {
       stmt.execute(createTableSQL);
-      log.info("Таблица создана: " + tableName + " с типом данных: " + type.getValue());
+      log.info("Таблица создана: {} с типом данных: {}", tableName, type.getValue());
     }
   }
 
@@ -138,7 +139,7 @@ public class CacheStorageDAO {
     String clearSQL = "DELETE FROM " + tableName;
     try (PreparedStatement stmt = conn.prepareStatement(clearSQL)) {
       int deletedRows = stmt.executeUpdate();
-      log.info("Очищено " + deletedRows + " записей из таблицы: " + tableName);
+      log.info("Очищено {} записей из таблицы: {}", deletedRows, tableName);
     }
   }
 
@@ -205,7 +206,7 @@ public class CacheStorageDAO {
       String typePart = tableName.substring(storageToken.length() + 1);
       return DataType.fromValue(typePart.toLowerCase());
     } catch (Exception e) {
-      log.error("Ошибка при разборе имени таблицы: " + tableName);
+      log.error("Ошибка при разборе имени таблицы: {}", tableName);
       return null;
     }
   }
@@ -233,7 +234,7 @@ public class CacheStorageDAO {
         }
       }
 
-      log.info("Загружено " + loadedCount + " записей из таблицы: " + tableName + " для типа: " + dataType);
+      log.info("Загружено {} записей из таблицы: {} для типа: {}", loadedCount, tableName, dataType);
 
     } finally {
       if (rs != null) {
