@@ -11,14 +11,15 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.*;
 import io.netty.util.CharsetUtil;
-import com.mipt.util.AppLogger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
 public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
-  private static final AppLogger log = AppLogger.getLogger(NettyHandler.class);
+  private static final Logger log = LoggerFactory.getLogger(NettyHandler.class);
 
   private final CacheStorageService cacheService;
   private final SessionService sessionService;
@@ -42,7 +43,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     String method = request.method().name();
     String uri = request.uri();
 
-    log.info("Received " + method + " request: " + uri);
+    log.info("Received {} request: {}", method, uri);
 
     if ("/".equals(uri)) {
       sendInfoPage(ctx);

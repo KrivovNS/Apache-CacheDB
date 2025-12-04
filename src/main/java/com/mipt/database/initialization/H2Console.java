@@ -2,12 +2,12 @@ package com.mipt.database.initialization;
 
 import org.h2.tools.Server;
 import java.sql.SQLException;
-import com.mipt.util.AppLogger;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class H2Console {
 
-  private static final AppLogger log = AppLogger.getLogger(H2Console.class);
+  private static final Logger log = LoggerFactory.getLogger(H2Console.class);
 
   public static void main(String[] args) throws SQLException {
     // Запускаем веб-консоль H2 на порту 8082

@@ -2,12 +2,12 @@ package com.mipt.database.initialization;
 
 import java.sql.Connection;
 import java.sql.Statement;
-import com.mipt.util.AppLogger;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class DatabaseInitializer {
 
-  private static final AppLogger log = AppLogger.getLogger(DatabaseInitializer.class);
+  private static final Logger log = LoggerFactory.getLogger(DatabaseInitializer.class);
 
   public static void initializeDatabase() {
     String[] createTables = {

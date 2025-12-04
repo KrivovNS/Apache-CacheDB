@@ -3,11 +3,12 @@ package com.mipt.database.initialization;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import com.mipt.util.AppLogger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class DatabaseConnection {
 
-  private static final AppLogger log = AppLogger.getLogger(DatabaseConnection.class);
+  private static final Logger log = LoggerFactory.getLogger(DatabaseConnection.class);
 
   private static Connection connection;
 
@@ -19,13 +20,13 @@ public class DatabaseConnection {
         String username = "sa";
         String password = "password";
 
-        log.info("Connecting to database: " + url);
+        log.info("Connecting to database: {}", url);
 
         // Создаем папку data если её нет
         try {
           java.nio.file.Files.createDirectories(java.nio.file.Paths.get("./data"));
         } catch (Exception e) {
-          log.warn("Could not create data directory: " + e.getMessage());
+          log.warn("Could not create data directory: {}", e.getMessage());
         }
 
         connection = DriverManager.getConnection(url, username, password);
