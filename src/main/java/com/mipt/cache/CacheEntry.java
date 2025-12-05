@@ -4,7 +4,6 @@ import com.mipt.controller.DataType;
 import java.time.Instant;
 import java.util.Objects;
 
-
 public class CacheEntry {
   private final DataType dataType;
   private final Object data;
@@ -15,7 +14,7 @@ public class CacheEntry {
   private int accessCount;
 
   public CacheEntry(DataType dataType, Object data, long sizeInBytes,
-      String createdByUser, Long ttlMillis) {
+      String createdByUser, Long ttlSeconds) {
     this.dataType = Objects.requireNonNull(dataType);
     this.data = Objects.requireNonNull(data);
     this.sizeInBytes = sizeInBytes;
@@ -23,13 +22,24 @@ public class CacheEntry {
     this.createdAt = Instant.now();
     this.accessCount = 0;
 
-    if (ttlMillis != null && ttlMillis > 0) {
-      this.expiresAt = createdAt.plusMillis(ttlMillis);
+    if (ttlSeconds != null && ttlSeconds > 0) {
+      this.expiresAt = createdAt.plusSeconds(ttlSeconds);
     }
   }
 
   public boolean isExpired() {
-    return expiresAt != null && Instant.now().isAfter(expiresAt);
+    if (expiresAt == null) {
+      return false;
+    }
+    return Instant.now().isAfter(expiresAt);
+  }
+
+  public Long getRemainingTTLSeconds() {
+    if (expiresAt == null) {
+      return null;
+    }
+    long remaining = Instant.now().until(expiresAt, java.time.temporal.ChronoUnit.SECONDS);
+    return remaining > 0 ? remaining : -1;
   }
 
   public void incrementAccessCount() {
