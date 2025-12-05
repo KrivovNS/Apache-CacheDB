@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Objects;
 
 public class CacheEntry {
+
   private final DataType dataType;
   private final Object data;
   private final long sizeInBytes;
@@ -27,6 +28,10 @@ public class CacheEntry {
     }
   }
 
+  public boolean dataWithTtl() {
+    return expiresAt != null;
+  }
+
   public boolean isExpired() {
     if (expiresAt == null) {
       return false;
@@ -34,26 +39,38 @@ public class CacheEntry {
     return Instant.now().isAfter(expiresAt);
   }
 
-  public Long getRemainingTTLSeconds() {
-    if (expiresAt == null) {
-      return null;
-    }
-    long remaining = Instant.now().until(expiresAt, java.time.temporal.ChronoUnit.SECONDS);
-    return remaining > 0 ? remaining : -1;
-  }
-
   public void incrementAccessCount() {
     accessCount++;
   }
 
   // Геттеры
-  public DataType getDataType() { return dataType; }
-  public Object getData() { return data; }
-  public long getSizeInBytes() { return sizeInBytes; }
-  public String getCreatedByUser() { return createdByUser; }
-  public Instant getCreatedAt() { return createdAt; }
-  public Instant getExpiresAt() { return expiresAt; }
-  public int getAccessCount() { return accessCount; }
+  public DataType getDataType() {
+    return dataType;
+  }
+
+  public Object getData() {
+    return data;
+  }
+
+  public long getSizeInBytes() {
+    return sizeInBytes;
+  }
+
+  public String getCreatedByUser() {
+    return createdByUser;
+  }
+
+  public Instant getCreatedAt() {
+    return createdAt;
+  }
+
+  public Instant getExpiresAt() {
+    return expiresAt;
+  }
+
+  public int getAccessCount() {
+    return accessCount;
+  }
 
   public void setExpiresAt(Instant expiresAt) {
     this.expiresAt = expiresAt;
