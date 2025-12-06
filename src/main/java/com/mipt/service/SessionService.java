@@ -76,9 +76,9 @@ public class SessionService {
     Session session = activeSessions.get(sessionToken);
     if (session != null) {
       long ttl = sessionTtlHours * 60;
-      return !session.isValid(ttl);
+      return session.isValid(ttl);
     }
-    return true;
+    return false;
   }
 
   /**
