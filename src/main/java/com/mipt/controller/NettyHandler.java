@@ -127,14 +127,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       Session session = sessionOpt.get();
       PermissionType userPermission = session.getPermissionType();
 
-      // Проверяем права доступа для isolated пользователей
-      if (userPermission == PermissionType.ISOLATED) {
-        response = createResponse(HttpResponseStatus.FORBIDDEN,
-            "ISOLATED users have restricted access");
-        ctx.writeAndFlush(response);
-        return;
-      }
-
       // Обработка в зависимости от метода
       if (method.isGet()) {
         response = handleCacheGet(key);
@@ -674,10 +666,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   private void sendInfoPage(ChannelHandlerContext ctx) {
     String info = "Cache Storage HTTP Server\n\n" +
         "Available endpoints:\n\n" +
-        "DEFAULT USER:\n" +
-        "  Login: default\n" +
-        "  Password: admin123\n" +
-        "  Permission: SUPERADMIN\n\n" +
         "AUTHENTICATION:\n" +
         "GET    /auth?login=USERNAME&password=PASSWORD -> returns session token\n\n" +
         "CACHE OPERATIONS:\n" +
