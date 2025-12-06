@@ -1,6 +1,5 @@
-package com.mipt.cache;
+package com.mipt.model;
 
-import com.mipt.controller.DataType;
 import java.time.Instant;
 import java.util.Objects;
 

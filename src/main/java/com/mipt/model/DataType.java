@@ -1,4 +1,4 @@
-package com.mipt.controller;
+package com.mipt.model;
 
 public enum DataType {
   JSON("json"),
@@ -37,14 +37,5 @@ public enum DataType {
       values[i] = types[i].getValue();
     }
     return values;
-  }
-
-  public static DataType fromValue(String value) {
-    for (DataType type : DataType.values()) {
-      if (type.value.equals(value)) {
-        return type;
-      }
-    }
-    return null;
   }
 }

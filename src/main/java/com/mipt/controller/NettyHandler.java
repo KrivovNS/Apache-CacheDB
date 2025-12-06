@@ -1,9 +1,14 @@
 package com.mipt.controller;
 
 import com.mipt.cache.CacheResult;
+import com.mipt.model.DataType;
+import com.mipt.model.PermissionType;
+import com.mipt.model.Session;
+import com.mipt.model.MaxMemoryPolicy;
+import com.mipt.model.HttpMethod;
 import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
-import com.mipt.database.dao.*;
+import com.mipt.database.dao.UserDAO;
 import com.mipt.model.User;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -13,9 +18,11 @@ import io.netty.handler.codec.http.*;
 import io.netty.util.CharsetUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
@@ -24,26 +31,23 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   private final CacheStorageService cacheService;
   private final SessionService sessionService;
   private final UserDAO userDAO;
-  private final CacheStorageDAO cacheStorageDAO;
   private final RequestParametersValidator validator;
 
   public NettyHandler(CacheStorageService cacheService,
       SessionService sessionService,
-      UserDAO userDAO,
-      CacheStorageDAO cacheStorageDAO) {
+      UserDAO userDAO) {
     this.cacheService = cacheService;
     this.sessionService = sessionService;
     this.userDAO = userDAO;
-    this.cacheStorageDAO = cacheStorageDAO;
     this.validator = new RequestParametersValidator();
   }
 
   @Override
   protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest request) throws Exception {
-    String method = request.method().name();
+    String methodStr = request.method().name();
     String uri = request.uri();
 
-    log.info("Received {} request: {}", method, uri);
+    log.info("Received {} request: {}", methodStr, uri);
 
     if ("/".equals(uri)) {
       sendInfoPage(ctx);
@@ -52,55 +56,96 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     String content = request.content().toString(CharsetUtil.UTF_8);
 
-    ValidationResult validation = validator.validateRequest(method, uri);
+    ValidationResult validation = validator.validateRequest(methodStr, uri);
     if (!validation.getValid()) {
       sendBadRequest(ctx, validation.getErrors());
+      return;
+    }
+
+    // Конвертируем строку в enum
+    HttpMethod method = HttpMethod.fromString(methodStr);
+    if (method == null) {
+      sendBadRequest(ctx, "Invalid HTTP method: " + methodStr);
       return;
     }
 
     // Обработка запросов к кэшу
     if (uri.startsWith("/cache")) {
       handleCacheRequest(ctx, method, uri, content);
+      return;
     }
-    // Обработка запросов к хранилищу
-    else if (uri.startsWith("/storage")) {
-      handleStorageRequest(ctx, method, uri, content);
-    } else {
-      sendNotFound(ctx, "Endpoint not found: " + uri);
+
+    if (uri.startsWith("/auth")) {
+      handleAuthRequest(ctx, method, uri, content);
+      return;
     }
+
+    if (uri.startsWith("/configuration")) {
+      handleConfigRequest(ctx, method, uri, content);
+      return;
+    }
+
+    if (uri.startsWith("/user")) {
+      handleUserRequest(ctx, method, uri, content);
+      return;
+    }
+
+    sendNotFound(ctx, "Endpoint not found: " + uri);
   }
 
-  private void handleCacheRequest(ChannelHandlerContext ctx, String method, String uri, String content) {
-    // Парсим параметры из URI
+  private void handleCacheRequest(ChannelHandlerContext ctx, HttpMethod method, String uri, String content) {
     Map<String, String> params = parseUri(uri);
     String sessionToken = params.get("session_token");
     String key = params.get("key");
-    String type = params.get("type");
 
     FullHttpResponse response;
 
     try {
       // Проверяем валидность сессии
-      if (!sessionService.isSessionValid(sessionToken)) {
+      if (!isSessionValid(sessionToken)) {
         response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
         ctx.writeAndFlush(response);
         return;
       }
 
-      DataType dataType = DataType.fromValue(type);
-      if (dataType == null) {
-        response = createResponse(HttpResponseStatus.BAD_REQUEST, "Invalid data type: " + type);
+      // Проверяем обязательные параметры
+      if (sessionToken == null || key == null) {
+        response = createResponse(HttpResponseStatus.BAD_REQUEST,
+            "Missing required parameters: session_token and key");
         ctx.writeAndFlush(response);
         return;
       }
 
-      response = switch (method) {
-        case "GET" -> handleCacheGet(sessionToken, dataType, key);
-        case "POST" -> handleCachePost(sessionToken, dataType, key, content);
-        case "PUT" -> handleCachePut(sessionToken, dataType, key, content);
-        case "DELETE" -> handleCacheDelete(sessionToken, dataType, key);
-        default -> createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED, "Method not allowed");
-      };
+      // Получаем сессию для проверки прав доступа
+      Optional<Session> sessionOpt = sessionService.getValidSession(sessionToken);
+      if (sessionOpt.isEmpty()) {
+        response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
+        ctx.writeAndFlush(response);
+        return;
+      }
+
+      Session session = sessionOpt.get();
+      PermissionType userPermission = session.getPermissionType();
+
+      // Проверяем права доступа для isolated пользователей
+      if (userPermission == PermissionType.ISOLATED) {
+        response = createResponse(HttpResponseStatus.FORBIDDEN,
+            "ISOLATED users have restricted access");
+        ctx.writeAndFlush(response);
+        return;
+      }
+
+      // Обработка в зависимости от метода
+      if (method.isGet()) {
+        response = handleCacheGet(key);
+      } else if (method.isWriteMethod()) { // POST или PUT
+        response = handleCacheWrite(method, sessionToken, key, params, content);
+      } else if (method.isDelete()) {
+        response = handleCacheDelete(key);
+      } else {
+        response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED,
+            "Method " + method.getMethod() + " not allowed for cache endpoint");
+      }
     } catch (Exception e) {
       log.error("Error processing cache request", e);
       response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
@@ -110,19 +155,129 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     ctx.writeAndFlush(response);
   }
 
-  private void handleStorageRequest(ChannelHandlerContext ctx, String method, String uri, String content) {
-    Map<String, String> params = parseUri(uri);
+  private FullHttpResponse handleCacheGet(String key) {
+    try {
+      CacheResult result = cacheService.get(key);
 
+      if (!result.isSuccess()) {
+        return createResponse(HttpResponseStatus.NOT_FOUND, result.getMessage());
+      }
+
+      return createResponse(HttpResponseStatus.OK, result.getData().toString());
+
+    } catch (Exception e) {
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error reading data: " + e.getMessage());
+    }
+  }
+
+  private FullHttpResponse handleCacheWrite(HttpMethod method, String sessionToken,
+      String key, Map<String, String> params,
+      String content) {
+    String type = params.get("type");
+    if (type == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Missing required parameter: type");
+    }
+
+    DataType dataType = DataType.fromString(type);
+    if (dataType == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Invalid data type: " + type + ". Valid types: " +
+              String.join(", ", DataType.getAllValues()));
+    }
+
+    if (content == null || content.trim().isEmpty()) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Request body is required for " + method.getMethod() + " method");
+    }
+
+    // Парсим TTL если он есть
+    String ttlParam = params.get("ttl");
+    Long ttlSeconds = null;
+    if (ttlParam != null) {
+      try {
+        Long ttlMs = parseTTL(ttlParam);
+        if (ttlMs <= 0) {
+          return createResponse(HttpResponseStatus.BAD_REQUEST,
+              "TTL must be positive");
+        }
+        ttlSeconds = ttlMs / 1000; // Конвертируем в секунды для cacheService
+      } catch (IllegalArgumentException e) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST,
+            "Invalid TTL format: " + e.getMessage());
+      }
+    }
+
+    try {
+      // Получаем пользователя из сессии
+      Optional<Session> sessionOpt = sessionService.getValidSession(sessionToken);
+      if (sessionOpt.isEmpty()) {
+        return createResponse(HttpResponseStatus.UNAUTHORIZED, "Session expired");
+      }
+
+      User user = sessionOpt.get().getCreator();
+      String username = user.getUsername();
+
+      // Рассчитываем размер данных
+      long sizeBytes = content.getBytes(StandardCharsets.UTF_8).length;
+
+      CacheResult result;
+      if (method.isPost()) {
+        result = cacheService.post(key, content, dataType, username, ttlSeconds, sizeBytes);
+      } else { // PUT
+        result = cacheService.put(key, content, dataType, username, ttlSeconds, sizeBytes);
+      }
+
+      if (!result.isSuccess()) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
+      }
+
+      String responseMessage = result.getMessage();
+      if (ttlSeconds != null) {
+        responseMessage += " (TTL: " + formatTTL(ttlSeconds * 1000) + ")";
+      }
+
+      return createResponse(HttpResponseStatus.OK, responseMessage);
+
+    } catch (Exception e) {
+      log.error("Error in cache " + method.getMethod(), e);
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error processing data: " + e.getMessage());
+    }
+  }
+
+  private FullHttpResponse handleCacheDelete(String key) {
+    try {
+      CacheResult result = cacheService.delete(key);
+
+      if (!result.isSuccess()) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
+      }
+
+      return createResponse(HttpResponseStatus.OK, result.getMessage());
+
+    } catch (Exception e) {
+      log.error("Error deleting cache entry", e);
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error deleting data: " + e.getMessage());
+    }
+  }
+
+  private void handleAuthRequest(ChannelHandlerContext ctx, HttpMethod method, String uri, String content) {
+    Map<String, String> params = parseUri(uri);
     FullHttpResponse response;
 
     try {
-      if ("POST".equals(method)) {
-        response = handleCreateStorage(params);
+      // Для /auth поддерживается только GET
+      if (method.isGet()) {
+        response = handleAuthLogin(params);
       } else {
-        response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED, "Method not allowed");
+        response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED,
+            "Method " + method.getMethod() + " not allowed for /auth endpoint. Use GET with login and password parameters");
       }
     } catch (Exception e) {
-      log.error("Error processing storage request", e);
+      log.error("Error processing auth request", e);
       response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
           "Server error: " + e.getMessage());
     }
@@ -130,146 +285,420 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     ctx.writeAndFlush(response);
   }
 
-  private FullHttpResponse handleCacheGet(String sessionToken, DataType dataType, String key) {
-    try {
-      CacheResult result = cacheService.readData(sessionToken, dataType, key);
-
-      if (!result.isSuccess()) {
-        return createResponse(HttpResponseStatus.NOT_FOUND, result.getMessage());
-      }
-
-      String responseData = DataTypeValidator.formatDataForResponse(result.getData(), dataType.getValue());
-      return createResponse(HttpResponseStatus.OK, responseData);
-
-    } catch (IllegalArgumentException e) {
-      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
-          "Error formatting response: " + e.getMessage());
-    } catch (Exception e) {
-      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
-          "Error reading data: " + e.getMessage());
-    }
-  }
-
-  private FullHttpResponse handleCachePost(String sessionToken, DataType dataType, String key, String value) {
-    try {
-      Object processedValue = DataTypeValidator.processDataForStorage(value, dataType.getValue());
-
-      CacheResult result = cacheService.insertData(sessionToken, dataType, key, processedValue);
-
-      if (!result.isSuccess()) {
-        return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
-      }
-
-      return createResponse(HttpResponseStatus.OK, result.getMessage());
-    } catch (IllegalArgumentException e) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST,
-          "Invalid data format for type " + dataType + ": " + e.getMessage());
-    } catch (Exception e) {
-      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
-          "Error processing data: " + e.getMessage());
-    }
-  }
-
-  private FullHttpResponse handleCachePut(String sessionToken, DataType dataType, String key, String value) {
-    try {
-      Object processedValue = DataTypeValidator.processDataForStorage(value, dataType.getValue());
-
-      CacheResult result = cacheService.updateData(sessionToken, dataType, key, processedValue);
-
-      if (!result.isSuccess()) {
-        return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
-      }
-
-      return createResponse(HttpResponseStatus.OK, result.getMessage());
-    } catch (IllegalArgumentException e) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST,
-          "Invalid data format for type " + dataType + ": " + e.getMessage());
-    } catch (Exception e) {
-      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
-          "Error processing data: " + e.getMessage());
-    }
-  }
-
-  private FullHttpResponse handleCacheDelete(String sessionToken, DataType dataType, String key) {
-    CacheResult result = cacheService.deleteData(sessionToken, dataType, key);
-
-    if (!result.isSuccess()) {
-      return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
-    }
-
-    return createResponse(HttpResponseStatus.OK, result.getMessage());
-  }
-
-  private FullHttpResponse handleCreateStorage(Map<String, String> params) {
+  private FullHttpResponse handleAuthLogin(Map<String, String> params) {
     String login = params.get("login");
     String password = params.get("password");
 
     if (login == null || password == null) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
-          "Missing parameters: login or password");
+          "Missing required parameters: login and password");
     }
 
-    User user = userDAO.findByUsername(login);
+    try {
+      // Ищем пользователя в базе
+      User user = userDAO.findByUsername(login);
 
-    if (user == null) {
-      // Создаем нового пользователя и хранилище
-      String sessionToken = sessionService.createNewSession();
-
-      // Получаем storageToken из сессии
-      String storageToken = sessionService.getStorageBySession(sessionToken)
-          .map(storage -> storage.getStorageToken())
-          .orElse(null);
-
-      if (storageToken != null) {
-        // Создаем пользователя с привязкой к хранилищу
-        User createdUser = userDAO.createUser(login, password, storageToken);
-        if (createdUser != null) {
-          return createResponse(HttpResponseStatus.OK,
-              "Storage created successfully. Session token: " + sessionToken);
-        } else {
-          return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Failed to create user");
-        }
-      } else {
-        return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Failed to create storage");
+      if (user == null) {
+        return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid login or password");
       }
-    } else {
+
       // Проверяем пароль
       if (!user.getPassword().equals(password)) {
-        return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid password");
+        return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid login or password");
       }
 
-      // Получаем хранилище пользователя
-      String storageToken = user.getStorageToken();
-      if (storageToken == null) {
-        return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "User has no storage assigned");
-      }
+      // Создаем сессию для пользователя
+      String sessionToken = sessionService.createSessionForUser(user);
 
-      // Создаем сессию для хранилища
-      String sessionToken = sessionService.createSessionForStorage(storageToken);
       return createResponse(HttpResponseStatus.OK,
-          "Session created. Session token: " + sessionToken);
+          "Authentication successful\n" +
+              "Session token: " + sessionToken + "\n" +
+              "User: " + user.getUsername() + "\n" +
+              "Permission: " + user.getPermissionType().getValue());
+
+    } catch (Exception e) {
+      log.error("Error during authentication", e);
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error during authentication: " + e.getMessage());
+    }
+  }
+
+  private void handleConfigRequest(ChannelHandlerContext ctx, HttpMethod method, String uri, String content) {
+    Map<String, String> params = parseUri(uri);
+    FullHttpResponse response;
+
+    try {
+      // Проверяем сессию
+      String sessionToken = params.get("session_token");
+      if (!isSuperAdminSession(sessionToken)) {
+        response = createResponse(HttpResponseStatus.FORBIDDEN,
+            "Only SUPERADMIN users can modify configuration");
+        ctx.writeAndFlush(response);
+        return;
+      }
+
+      // Для /configuration поддерживается только PUT
+      if (method.isPut()) {
+        response = handleUpdateConfiguration(params);
+      } else {
+        response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED,
+            "Method " + method.getMethod() + " not allowed for /configuration endpoint. Use PUT");
+      }
+    } catch (Exception e) {
+      log.error("Error processing config request", e);
+      response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Server error: " + e.getMessage());
+    }
+
+    ctx.writeAndFlush(response);
+  }
+
+  private FullHttpResponse handleUpdateConfiguration(Map<String, String> params) {
+    String maxMemoryPolicyParam = params.get("maxmemory_policy");
+    String maxStorageMemoryParam = params.get("maxStorageMemory");
+
+    if (maxMemoryPolicyParam == null || maxStorageMemoryParam == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Missing required parameters: maxmemory_policy and maxStorageMemory");
+    }
+
+    try {
+      // Парсим политику памяти
+      MaxMemoryPolicy maxMemoryPolicy = MaxMemoryPolicy.fromString(maxMemoryPolicyParam);
+      if (maxMemoryPolicy == null) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST,
+            "Invalid maxmemory_policy. Valid values: " +
+                String.join(", ", MaxMemoryPolicy.getAllValues()));
+      }
+
+      // Парсим максимальный размер памяти
+      long maxStorageMemory;
+      try {
+        maxStorageMemory = Long.parseLong(maxStorageMemoryParam);
+        if (maxStorageMemory <= 0) {
+          return createResponse(HttpResponseStatus.BAD_REQUEST,
+              "maxStorageMemory must be positive");
+        }
+      } catch (NumberFormatException e) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST,
+            "Invalid maxStorageMemory format. Must be a number");
+      }
+
+      // Изменяем конфигурацию кэш-сервиса
+      CacheResult result = cacheService.changePolicy(maxMemoryPolicy, maxStorageMemory);
+
+      if (!result.isSuccess()) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
+      }
+
+      return createResponse(HttpResponseStatus.OK,
+          "Configuration updated successfully\n" +
+              "Max memory policy: " + maxMemoryPolicy.getValue() + "\n" +
+              "Max storage memory: " + maxStorageMemory + " bytes");
+
+    } catch (Exception e) {
+      log.error("Error updating configuration", e);
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error updating configuration: " + e.getMessage());
+    }
+  }
+
+  private void handleUserRequest(ChannelHandlerContext ctx, HttpMethod method, String uri, String content) {
+    Map<String, String> params = parseUri(uri);
+    FullHttpResponse response;
+
+    try {
+      // Проверяем сессию для всех операций с пользователями
+      String sessionToken = params.get("session_token");
+      if (!isSuperAdminSession(sessionToken)) {
+        response = createResponse(HttpResponseStatus.FORBIDDEN,
+            "Only SUPERADMIN users can manage users");
+        ctx.writeAndFlush(response);
+        return;
+      }
+
+      if (method.isPut()) {
+        response = handleCreateUser(params);
+      } else if (method.isPost()) {
+        response = handleUpdateUser(params);
+      } else if (method.isDelete()) {
+        response = handleDeleteUser(params);
+      } else {
+        response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED,
+            "Method " + method.getMethod() + " not allowed for /user endpoint");
+      }
+    } catch (Exception e) {
+      log.error("Error processing user request", e);
+      response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Server error: " + e.getMessage());
+    }
+
+    ctx.writeAndFlush(response);
+  }
+
+  private FullHttpResponse handleCreateUser(Map<String, String> params) {
+    String newLogin = params.get("new_login");
+    String password = params.get("password");
+    String permissionParam = params.get("permission");
+
+    if (newLogin == null || password == null || permissionParam == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Missing required parameters: new_login, password and permission");
+    }
+
+    try {
+      // Проверяем формат permission
+      PermissionType permissionType = PermissionType.fromString(permissionParam);
+      if (permissionType == null) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST,
+            "Invalid permission. Valid values: " +
+                String.join(", ", PermissionType.getAllValues()));
+      }
+
+      // Проверяем, не существует ли уже пользователь с таким логином
+      User existingUser = userDAO.findByUsername(newLogin);
+      if (existingUser != null) {
+        return createResponse(HttpResponseStatus.CONFLICT,
+            "User with login '" + newLogin + "' already exists");
+      }
+
+      // Создаем нового пользователя
+      User newUser = userDAO.createUser(newLogin, password, permissionType);
+
+      if (newUser == null) {
+        return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+            "Failed to create user");
+      }
+
+      return createResponse(HttpResponseStatus.OK,
+          "User created successfully\n" +
+              "ID: " + newUser.getId() + "\n" +
+              "Login: " + newUser.getUsername() + "\n" +
+              "Permission: " + newUser.getPermissionType().getValue());
+
+    } catch (Exception e) {
+      log.error("Error creating user", e);
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error creating user: " + e.getMessage());
+    }
+  }
+
+  private FullHttpResponse handleUpdateUser(Map<String, String> params) {
+    String login = params.get("login");
+    String newLogin = params.get("new_login");
+    String password = params.get("password");
+    String permissionParam = params.get("permission");
+
+    if (login == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Missing required parameter: login");
+    }
+
+    // Хотя бы один параметр для обновления должен быть указан
+    if (newLogin == null && password == null && permissionParam == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "At least one update parameter must be specified: new_login, password or permission");
+    }
+
+    try {
+      // Находим существующего пользователя
+      User existingUser = userDAO.findByUsername(login);
+      if (existingUser == null) {
+        return createResponse(HttpResponseStatus.NOT_FOUND,
+            "User with login '" + login + "' not found");
+      }
+
+      // Парсим permission если указан
+      PermissionType permissionType = null;
+      if (permissionParam != null) {
+        permissionType = PermissionType.fromString(permissionParam);
+        if (permissionType == null) {
+          return createResponse(HttpResponseStatus.BAD_REQUEST,
+              "Invalid permission. Valid values: " +
+                  String.join(", ", PermissionType.getAllValues()));
+        }
+      }
+
+      // Обновляем пользователя в базе данных
+      boolean success = userDAO.updateUser(login, newLogin, password, permissionType);
+
+      if (!success) {
+        return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+            "Failed to update user");
+      }
+
+      // Получаем обновленного пользователя
+      User updatedUser = userDAO.findByUsername(newLogin != null ? newLogin : login);
+
+      return createResponse(HttpResponseStatus.OK,
+          "User updated successfully\n" +
+              "ID: " + updatedUser.getId() + "\n" +
+              "Login: " + updatedUser.getUsername() + "\n" +
+              "Permission: " + updatedUser.getPermissionType().getValue());
+
+    } catch (Exception e) {
+      log.error("Error updating user", e);
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error updating user: " + e.getMessage());
+    }
+  }
+
+  private FullHttpResponse handleDeleteUser(Map<String, String> params) {
+    String login = params.get("login");
+
+    if (login == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST,
+          "Missing required parameter: login");
+    }
+
+    try {
+      // Находим пользователя
+      User existingUser = userDAO.findByUsername(login);
+      if (existingUser == null) {
+        return createResponse(HttpResponseStatus.NOT_FOUND,
+            "User with login '" + login + "' not found");
+      }
+
+      // Удаляем пользователя из базы данных
+      boolean success = userDAO.deleteUser(login);
+
+      if (!success) {
+        return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+            "Failed to delete user");
+      }
+
+      return createResponse(HttpResponseStatus.OK,
+          "User deleted successfully\n" +
+              "Deleted user: " + login);
+
+    } catch (Exception e) {
+      log.error("Error deleting user", e);
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+          "Error deleting user: " + e.getMessage());
+    }
+  }
+
+  // Вспомогательные методы
+
+  /**
+   * Проверяет валидность сессии
+   */
+  private boolean isSessionValid(String sessionToken) {
+    if (sessionToken == null) {
+      return false;
+    }
+    return sessionService.getValidSession(sessionToken).isPresent();
+  }
+
+  /**
+   * Проверяет, является ли сессия сессией SUPERADMIN
+   */
+  private boolean isSuperAdminSession(String sessionToken) {
+    if (!isSessionValid(sessionToken)) {
+      return false;
+    }
+
+    Optional<Session> sessionOpt = sessionService.getValidSession(sessionToken);
+    if (sessionOpt.isEmpty()) {
+      return false;
+    }
+
+    Session session = sessionOpt.get();
+    return session.getPermissionType() == PermissionType.SUPERADMIN;
+  }
+
+  /**
+   * Парсит строку TTL в миллисекунды
+   */
+  private Long parseTTL(String ttlString) throws IllegalArgumentException {
+    if (ttlString == null || ttlString.trim().isEmpty()) {
+      return null;
+    }
+
+    ttlString = ttlString.trim().toLowerCase();
+
+    try {
+      if (ttlString.endsWith("ms")) {
+        String value = ttlString.substring(0, ttlString.length() - 2);
+        long ttl = Long.parseLong(value);
+        if (ttl <= 0) throw new IllegalArgumentException("TTL must be positive");
+        return ttl;
+      } else if (ttlString.endsWith("s")) {
+        String value = ttlString.substring(0, ttlString.length() - 1);
+        long ttl = Long.parseLong(value);
+        if (ttl <= 0) throw new IllegalArgumentException("TTL must be positive");
+        return ttl * 1000;
+      } else if (ttlString.endsWith("m")) {
+        String value = ttlString.substring(0, ttlString.length() - 1);
+        long ttl = Long.parseLong(value);
+        if (ttl <= 0) throw new IllegalArgumentException("TTL must be positive");
+        return ttl * 60 * 1000;
+      } else if (ttlString.endsWith("h")) {
+        String value = ttlString.substring(0, ttlString.length() - 1);
+        long ttl = Long.parseLong(value);
+        if (ttl <= 0) throw new IllegalArgumentException("TTL must be positive");
+        return ttl * 60 * 60 * 1000;
+      } else if (ttlString.endsWith("d")) {
+        String value = ttlString.substring(0, ttlString.length() - 1);
+        long ttl = Long.parseLong(value);
+        if (ttl <= 0) throw new IllegalArgumentException("TTL must be positive");
+        return ttl * 24 * 60 * 60 * 1000;
+      } else {
+        long ttl = Long.parseLong(ttlString);
+        if (ttl <= 0) throw new IllegalArgumentException("TTL must be positive");
+        return ttl;
+      }
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("Invalid TTL format: " + ttlString +
+          ". Expected format: <number>[ms|s|m|h|d] or plain milliseconds");
+    }
+  }
+
+  /**
+   * Форматирует TTL в удобочитаемую строку
+   */
+  private String formatTTL(long ttlMs) {
+    if (ttlMs < 1000) {
+      return ttlMs + "ms";
+    } else if (ttlMs < 60 * 1000) {
+      return (ttlMs / 1000) + "s";
+    } else if (ttlMs < 60 * 60 * 1000) {
+      return (ttlMs / (60 * 1000)) + "m";
+    } else if (ttlMs < 24 * 60 * 60 * 1000) {
+      return (ttlMs / (60 * 60 * 1000)) + "h";
+    } else {
+      return (ttlMs / (24 * 60 * 60 * 1000)) + "d";
     }
   }
 
   private void sendInfoPage(ChannelHandlerContext ctx) {
     String info = "Cache Storage HTTP Server\n\n" +
         "Available endpoints:\n\n" +
+        "DEFAULT USER:\n" +
+        "  Login: default\n" +
+        "  Password: admin123\n" +
+        "  Permission: SUPERADMIN\n\n" +
+        "AUTHENTICATION:\n" +
+        "GET    /auth?login=USERNAME&password=PASSWORD -> returns session token\n\n" +
         "CACHE OPERATIONS:\n" +
-        "GET    /cache?session_token=TOKEN&key=KEY&type=TYPE\n" +
-        "POST   /cache?session_token=TOKEN&key=KEY&type=TYPE (with body - insert)\n" +
-        "PUT    /cache?session_token=TOKEN&key=KEY&type=TYPE (with body - update)\n" +
-        "DELETE /cache?session_token=TOKEN&key=KEY&type=TYPE\n\n" +
-        "STORAGE OPERATIONS:\n" +
-        "POST   /storage?login=USERNAME&password=PASSWORD (create storage/get session)\n\n" +
-        "Data types: " + String.join(", ", DataType.getAllValues()) + "\n\n" +
-        "Workflow:\n" +
-        "1. First request to /storage with login/password - creates storage and returns session_token\n" +
-        "2. Use session_token for all cache operations\n" +
-        "3. Session expires after 24 hours of inactivity\n\n" +
+        "GET    /cache?session_token=TOKEN&key=KEY\n" +
+        "POST   /cache?session_token=TOKEN&key=KEY&type=TYPE&ttl=TTL (with body - insert)\n" +
+        "PUT    /cache?session_token=TOKEN&key=KEY&type=TYPE&ttl=TTL (with body - update)\n" +
+        "DELETE /cache?session_token=TOKEN&key=KEY\n\n" +
+        "Data types: " + String.join(", ", DataType.getAllValues()) + "\n" +
+        "TTL format: <number>[ms|s|m|h|d] or plain milliseconds\n\n" +
+        "USER MANAGEMENT (SUPERADMIN only):\n" +
+        "PUT    /user?session_token=TOKEN&new_login=LOGIN&password=PASSWORD&permission=PERMISSION (create user)\n" +
+        "POST   /user?session_token=TOKEN&login=LOGIN&[new_login=LOGIN]&[password=PASSWORD]&[permission=PERMISSION] (update user)\n" +
+        "DELETE /user?session_token=TOKEN&login=LOGIN (delete user)\n\n" +
+        "Permissions: " + String.join(", ", PermissionType.getAllValues()) + "\n\n" +
+        "CONFIGURATION (SUPERADMIN only):\n" +
+        "PUT    /configuration?session_token=TOKEN&maxmemory_policy=POLICY&maxStorageMemory=SIZE\n\n" +
+        "Max memory policies: " + String.join(", ", MaxMemoryPolicy.getAllValues()) + "\n\n" +
         "Examples:\n" +
-        "Create storage: curl -X POST \"http://localhost:8080/storage?login=admin&password=pass\"\n" +
-        "Read cache: curl \"http://localhost:8080/cache?session_token=xyz789&key=test&type=string\"\n" +
-        "Insert data: curl -X POST -d 'value' \"http://localhost:8080/cache?session_token=xyz789&key=test&type=string\"";
+        "  Auth:         curl \"http://localhost:8080/auth?login=default&password=admin\"\n" +
+        "  Create user:  curl -X PUT \"http://localhost:8080/user?session_token=XYZ&new_login=bob&password=123&permission=admin\"\n" +
+        "  Set cache:    curl -X POST -d 'data' \"http://localhost:8080/cache?session_token=XYZ&key=test&type=string&ttl=30s\"";
 
     FullHttpResponse response = createResponse(HttpResponseStatus.OK, info);
     ctx.writeAndFlush(response);

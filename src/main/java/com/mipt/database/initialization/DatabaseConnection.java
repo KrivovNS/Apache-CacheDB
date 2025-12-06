@@ -1,24 +1,35 @@
 package com.mipt.database.initialization;
 
+import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.Properties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class DatabaseConnection {
 
   private static final Logger log = LoggerFactory.getLogger(DatabaseConnection.class);
-
   private static Connection connection;
 
   public static Connection getConnection() throws SQLException {
     if (connection == null || connection.isClosed()) {
       try {
-        // Прямые настройки вместо properties файла
-        String url = "jdbc:h2:file:./data/storagedb;DB_CLOSE_DELAY=-1";
-        String username = "sa";
-        String password = "password";
+        Properties props = new Properties();
+
+        try (InputStream input = DatabaseConnection.class
+            .getClassLoader()
+            .getResourceAsStream("application.properties")) {
+
+          if (input != null) {
+            props.load(input);
+          }
+        }
+
+        String url = props.getProperty("db.url");
+        String username = props.getProperty("db.username");
+        String password = props.getProperty("db.password");
 
         log.info("Connecting to database: {}", url);
 

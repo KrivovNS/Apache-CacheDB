@@ -24,18 +24,15 @@ public class NettyHttpServer {
   private final CacheStorageService cacheService;
   private final SessionService sessionService;
   private final UserDAO userDAO;
-  private final CacheStorageDAO cacheStorageDAO;
 
   public NettyHttpServer(int port,
       CacheStorageService cacheService,
       SessionService sessionService,
-      UserDAO userDAO,
-      CacheStorageDAO cacheStorageDAO) {
+      UserDAO userDAO) {
     this.port = port;
     this.cacheService = cacheService;
     this.sessionService = sessionService;
     this.userDAO = userDAO;
-    this.cacheStorageDAO = cacheStorageDAO;
   }
 
   public void run() throws Exception {
@@ -54,7 +51,7 @@ public class NettyHttpServer {
 
               p.addLast(new HttpServerCodec());
               p.addLast(new HttpObjectAggregator(65536));
-              p.addLast(new NettyHandler(cacheService, sessionService, userDAO, cacheStorageDAO));
+              p.addLast(new NettyHandler(cacheService, sessionService, userDAO));
             }
           })
           .option(ChannelOption.SO_BACKLOG, 128)

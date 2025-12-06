@@ -2,6 +2,7 @@ package com.mipt.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.mipt.model.DataType;
 
 public class DataTypeValidator {
 

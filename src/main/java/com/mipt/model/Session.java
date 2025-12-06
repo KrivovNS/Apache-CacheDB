@@ -4,34 +4,25 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
 public class Session {
-  private String sessionToken;
+  private User creator;
+  private PermissionType permissionType;
   private Instant createdAt;
-  private CacheStorage storage;
 
-  public Session(String sessionToken, CacheStorage storage) {
-    this.sessionToken = sessionToken;
-    this.storage = storage;
+  public Session(User creator, PermissionType permissionType) {
+    this.creator = creator;
+    this.permissionType = permissionType;
     this.createdAt = Instant.now();
   }
 
-  public Session(String sessionToken, Instant createdAt, CacheStorage storage) {
-    this.sessionToken = sessionToken;
-    this.createdAt = createdAt;
-    this.storage = storage;
-  }
-
   // Геттеры
-  public String getSessionToken() {
-    return sessionToken;
-  }
-
   public Instant getCreatedAt() {
     return createdAt;
   }
 
-  public CacheStorage getStorage() {
-    return storage;
-  }
+  public PermissionType getPermissionType() {return permissionType; }
+
+  public User getCreator() {return creator; }
+
 
   /**
    * Проверяет валидность сессии
@@ -41,18 +32,7 @@ public class Session {
     return Instant.now().isBefore(expirationTime);
   }
 
-  /**
-   * Возвращает количество часов до истечения сессии
-   */
-  public long getHoursUntilExpiration(long ttlHours) {
-    Instant expirationTime = createdAt.plus(ttlHours, ChronoUnit.HOURS);
-    return ChronoUnit.HOURS.between(Instant.now(), expirationTime);
-  }
-
-  /**
-   * Обновляет время создания сессии
-   */
   public void refresh() {
-    this.createdAt = Instant.now();
+    createdAt = Instant.now();
   }
 }

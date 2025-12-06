@@ -3,7 +3,7 @@ package com.mipt.service;
 import static com.mipt.model.MaxMemoryPolicy.ALLKEYSLRU;
 
 import com.mipt.cache.CacheResult;
-import com.mipt.controller.DataType;
+import com.mipt.model.DataType;
 import com.mipt.model.CacheStorage;
 import com.mipt.model.MaxMemoryPolicy;
 import java.util.concurrent.Executors;
@@ -21,6 +21,7 @@ public class CacheStorageService {
   private int currentDbIndex = 0;
   private long maxMemoryPerDb;
   private MaxMemoryPolicy maxMemoryPolicy;
+  private boolean canPolicyBeChanged;
 
   public CacheStorageService() {
     this(DEFAULT_MAX_MEMORY, ALLKEYSLRU);
@@ -32,14 +33,13 @@ public class CacheStorageService {
 
     // Инициализируем 16 БД
     this.databases = new CacheStorage[DEFAULT_DB_COUNT];
-    for (int i = 0; i < DEFAULT_DB_COUNT; i++) {
-      databases[i] = new CacheStorage(maxMemoryPerDb, maxMemoryPolicy);
-    }
+    createCacheStorages();
 
     // Запускаем периодическую очистку просроченных ключей
     this.cleanupScheduler = Executors.newSingleThreadScheduledExecutor();
     this.cleanupScheduler.scheduleAtFixedRate(this::cleanupAllDatabases,
         1, 1, TimeUnit.MINUTES);
+    this.canPolicyBeChanged = true;
   }
 
   // Выбор БД
@@ -54,6 +54,9 @@ public class CacheStorageService {
   // Основные операции (работают с текущей БД)
   public CacheResult post(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes) {
+    if (canPolicyBeChanged) {
+      canPolicyBeChanged = false;
+    }
     if (!databases[currentDbIndex].containsKey(key)) {
       return databases[currentDbIndex].set(key, value, dataType, user, ttlSeconds, sizeBytes);
     }
@@ -93,6 +96,22 @@ public class CacheStorageService {
       cleanupScheduler.awaitTermination(5, TimeUnit.SECONDS);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+    }
+  }
+
+  public CacheResult changePolicy(MaxMemoryPolicy maxMemoryPolicy, long totalMaxMemory) {
+    if (canPolicyBeChanged) {
+      this.maxMemoryPolicy = maxMemoryPolicy;
+      this.maxMemoryPerDb = totalMaxMemory / DEFAULT_DB_COUNT;
+      createCacheStorages();
+      return CacheResult.success();
+    }
+    return CacheResult.error("Can't change configuration");
+  }
+
+  private void createCacheStorages() {
+    for (int i = 0; i < DEFAULT_DB_COUNT; i++) {
+      databases[i] = new CacheStorage(maxMemoryPerDb, maxMemoryPolicy);
     }
   }
 
