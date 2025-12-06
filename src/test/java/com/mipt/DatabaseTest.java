@@ -53,7 +53,7 @@ class DatabaseTest {
 
       assertTrue(rs.next());
       assertEquals("default", rs.getString("username"));
-      assertEquals("admin", rs.getString("password"));
+      assertEquals("admin123", rs.getString("password"));
       assertEquals("superadmin", rs.getString("permission"));
 
       System.out.println("Default user verified");

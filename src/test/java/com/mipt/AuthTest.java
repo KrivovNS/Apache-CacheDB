@@ -1,4 +1,4 @@
-package com.mipt;
+ package com.mipt;
 
 import com.mipt.controller.NettyHandler;
 import com.mipt.database.dao.UserDAO;
@@ -114,7 +114,8 @@ class AuthTest {
     CacheStorageService cacheService = new CacheStorageService();
     SessionService sessionService = new SessionService();
     UserDAO userDAO = new UserDAO();
-    NettyHandler nettyHandler = new NettyHandler(cacheService, sessionService, userDAO);
+    NettyHandler nettyHandler =
+    new NettyHandler(cacheService, sessionService, userDAO);
 
     String uri = "/auth?login=nonexistentuser&password=somepass";
     FullHttpRequest request = new DefaultFullHttpRequest(
