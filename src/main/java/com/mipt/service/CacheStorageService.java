@@ -12,14 +12,12 @@ import java.util.concurrent.TimeUnit;
 
 public class CacheStorageService {
 
-  private static final int DEFAULT_DB_COUNT = 16;
   private static final long DEFAULT_MAX_MEMORY = 100 * 1024 * 1024; // 100MB
 
-  private final CacheStorage[] databases;
+  private CacheStorage database;
   private final ScheduledExecutorService cleanupScheduler;
 
-  private int currentDbIndex = 0;
-  private long maxMemoryPerDb;
+  private long maxMemory;
   private MaxMemoryPolicy maxMemoryPolicy;
   private boolean canPolicyBeChanged;
 
@@ -27,66 +25,52 @@ public class CacheStorageService {
     this(DEFAULT_MAX_MEMORY, ALLKEYSLRU);
   }
 
-  public CacheStorageService(long totalMaxMemory, MaxMemoryPolicy maxMemoryPolicy) {
-    this.maxMemoryPerDb = totalMaxMemory / DEFAULT_DB_COUNT;
+  public CacheStorageService(long maxMemory, MaxMemoryPolicy maxMemoryPolicy) {
+    this.maxMemory = maxMemory;
     this.maxMemoryPolicy = maxMemoryPolicy;
 
-    // Инициализируем 16 БД
-    this.databases = new CacheStorage[DEFAULT_DB_COUNT];
     createCacheStorages();
 
     // Запускаем периодическую очистку просроченных ключей
     this.cleanupScheduler = Executors.newSingleThreadScheduledExecutor();
-    this.cleanupScheduler.scheduleAtFixedRate(this::cleanupAllDatabases,
+    this.cleanupScheduler.scheduleAtFixedRate(this::cleanupDatabase,
         1, 1, TimeUnit.MINUTES);
     this.canPolicyBeChanged = true;
   }
 
-  // Выбор БД
-  public CacheResult selectDb(int dbIndex) {
-    if (dbIndex < 0 || dbIndex >= databases.length) {
-      return CacheResult.error("DB index out of range (0-15)");
-    }
-    currentDbIndex = dbIndex;
-    return CacheResult.success("Switched to DB " + dbIndex);
-  }
-
-  // Основные операции (работают с текущей БД)
+  // Основные операции (работают с единственной БД)
   public CacheResult post(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes) {
     if (canPolicyBeChanged) {
       canPolicyBeChanged = false;
     }
-    if (!databases[currentDbIndex].containsKey(key)) {
-      return databases[currentDbIndex].set(key, value, dataType, user, ttlSeconds, sizeBytes);
+    if (!database.containsKey(key)) {
+      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes);
     }
     return CacheResult.error("The key already exists");
   }
 
   public CacheResult put(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes) {
-    if (databases[currentDbIndex].containsKey(key)) {
-      return databases[currentDbIndex].set(key, value, dataType, user, ttlSeconds, sizeBytes);
+    if (database.containsKey(key)) {
+      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes);
     }
     return CacheResult.error("The key not exists");
   }
 
   public CacheResult get(String key) {
-    return databases[currentDbIndex].get(key);
+    return database.get(key);
   }
 
   public CacheResult delete(String key) {
-    return databases[currentDbIndex].delete(key);
+    return database.delete(key);
   }
 
   // Вспомогательные методы
-  private void cleanupAllDatabases() {
-    int totalRemoved = 0;
-    for (CacheStorage db : databases) {
-      totalRemoved += db.cleanupExpired();
-    }
-    if (totalRemoved > 0) {
-      System.out.println("Cleanup removed " + totalRemoved + " expired keys");
+  private void cleanupDatabase() {
+    int removed = database.cleanupExpired();
+    if (removed > 0) {
+      System.out.println("Cleanup removed " + removed + " expired keys");
     }
   }
 
@@ -102,7 +86,7 @@ public class CacheStorageService {
   public CacheResult changePolicy(MaxMemoryPolicy maxMemoryPolicy, long totalMaxMemory) {
     if (canPolicyBeChanged) {
       this.maxMemoryPolicy = maxMemoryPolicy;
-      this.maxMemoryPerDb = totalMaxMemory / DEFAULT_DB_COUNT;
+      this.maxMemory = totalMaxMemory;
       createCacheStorages();
       return CacheResult.success();
     }
@@ -110,17 +94,10 @@ public class CacheStorageService {
   }
 
   private void createCacheStorages() {
-    for (int i = 0; i < DEFAULT_DB_COUNT; i++) {
-      databases[i] = new CacheStorage(maxMemoryPerDb, maxMemoryPolicy);
-    }
+      database = new CacheStorage(maxMemory, maxMemoryPolicy);
   }
 
-  // Геттеры
-  public int getCurrentDbIndex() {
-    return currentDbIndex;
-  }
-
-  public long getMaxMemoryPerDb() {
-    return maxMemoryPerDb;
+  public long getmaxMemory() {
+    return maxMemory;
   }
 }
