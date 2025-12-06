@@ -139,8 +139,20 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       if (method.isGet()) {
         response = handleCacheGet(key);
       } else if (method.isWriteMethod()) { // POST или PUT
+        if (userPermission == PermissionType.READER) {
+          response = createResponse(HttpResponseStatus.FORBIDDEN,
+              "READER users can only get data");
+          ctx.writeAndFlush(response);
+          return;
+        }
         response = handleCacheWrite(method, sessionToken, key, params, content);
       } else if (method.isDelete()) {
+        if (userPermission == PermissionType.READER) {
+          response = createResponse(HttpResponseStatus.FORBIDDEN,
+              "READER users can only get data");
+          ctx.writeAndFlush(response);
+          return;
+        }
         response = handleCacheDelete(key);
       } else {
         response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED,

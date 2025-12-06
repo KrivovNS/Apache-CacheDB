@@ -78,7 +78,7 @@ public class SessionService {
       long ttl = sessionTtlHours * 60;
       return !session.isValid(ttl);
     }
-    return true;
+    return false;
   }
 
   /**
