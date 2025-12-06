@@ -430,9 +430,9 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       }
 
       if (method.isPut()) {
-        response = handleCreateUser(params);
-      } else if (method.isPost()) {
         response = handleUpdateUser(params);
+      } else if (method.isPost()) {
+        response = handleCreateUser(params);
       } else if (method.isDelete()) {
         response = handleDeleteUser(params);
       } else {
