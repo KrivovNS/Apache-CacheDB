@@ -22,11 +22,10 @@ public class Main {
 
       // 2. Инициализируем DAO
       UserDAO userDAO = new UserDAO();
-      CacheStorageDAO cacheStorageDAO = new CacheStorageDAO();
 
       // 3. Инициализируем сервисы
-      CacheStorageService cacheService = new CacheStorageService(cacheStorageDAO);
-      SessionService sessionService = new SessionService(cacheService);
+      CacheStorageService cacheService = new CacheStorageService();
+      SessionService sessionService = new SessionService();
 
       // 4. Запускаем очистку сессий каждую минуту
       Executors.newScheduledThreadPool(1)
@@ -40,8 +39,7 @@ public class Main {
       // 5. Запускаем Netty HTTP сервер
       int port = 8080;
       NettyHttpServer server = new NettyHttpServer(
-          port, cacheService, sessionService, userDAO, cacheStorageDAO
-      );
+          port, cacheService, sessionService, userDAO);
 
       server.run();
 

@@ -1,5 +1,8 @@
 package com.mipt.controller;
 
+import com.mipt.model.DataType;
+import com.mipt.model.PermissionType;
+import com.mipt.model.MaxMemoryPolicy;
 import io.netty.handler.codec.http.QueryStringDecoder;
 import java.util.List;
 import java.util.Map;
@@ -15,23 +18,39 @@ public class RequestParametersValidator {
 
   // Допустимые параметры для каждого endpoint
   private static final Set<String> GET_CACHE_PARAMS = Set.of(
-      "session_token", "key", "type"
+      "session_token", "key"
   );
 
   private static final Set<String> POST_CACHE_PARAMS = Set.of(
-      "session_token", "key", "type"
+      "session_token", "key", "type", "ttl"
   );
 
   private static final Set<String> PUT_CACHE_PARAMS = Set.of(
-      "session_token", "key", "type"
+      "session_token", "key", "type", "ttl"
   );
 
   private static final Set<String> DELETE_CACHE_PARAMS = Set.of(
-      "session_token", "key", "type"
+      "session_token", "key"
   );
 
-  private static final Set<String> CREATE_STORAGE_PARAMS = Set.of(
+  private static final Set<String> GET_AUTH_PARAMS = Set.of(
       "login", "password"
+  );
+
+  private static final Set<String> PUT_USER_PARAMS = Set.of(
+      "session_token", "new_login", "password", "permission"
+  );
+
+  private static final Set<String> POST_USER_PARAMS = Set.of(
+      "session_token", "login", "new_login", "password", "permission"
+  );
+
+  private static final Set<String> DELETE_USER_PARAMS = Set.of(
+      "session_token", "login"
+  );
+
+  private static final Set<String> PUT_CONFIG_PARAMS = Set.of(
+      "session_token", "maxmemory_policy", "maxStorageMemory"
   );
 
   // Основной метод валидации для NettyHandler
@@ -40,8 +59,14 @@ public class RequestParametersValidator {
 
     if (uri.startsWith("/cache")) {
       validateCacheRequest(method, uri, result);
-    } else if (uri.startsWith("/storage")) {
-      validateStorageRequest(method, uri, result);
+    } else if (uri.startsWith("/auth")) {
+      validateAuthRequest(method, uri, result);
+    } else if (uri.startsWith("/user")) {
+      validateUserRequest(method, uri, result);
+    } else if (uri.startsWith("/configuration")) {
+      validateConfigRequest(method, uri, result);
+    } else {
+      result.addError("Unknown endpoint: " + uri);
     }
 
     return result;
@@ -66,9 +91,22 @@ public class RequestParametersValidator {
       return;
     }
 
-    // Обязательные параметры
-    for (String requiredParam : allowedParams) {
-      validateRequiredParam(result, params, requiredParam);
+    // Обязательные параметры в зависимости от метода
+    switch (method.toUpperCase()) {
+      case "GET":
+        validateRequiredParam(result, params, "session_token");
+        validateRequiredParam(result, params, "key");
+        break;
+      case "POST":
+      case "PUT":
+        validateRequiredParam(result, params, "session_token");
+        validateRequiredParam(result, params, "key");
+        validateRequiredParam(result, params, "type");
+        break;
+      case "DELETE":
+        validateRequiredParam(result, params, "session_token");
+        validateRequiredParam(result, params, "key");
+        break;
     }
 
     // Проверка на единственность значений
@@ -78,12 +116,22 @@ public class RequestParametersValidator {
       return;
     }
 
-    // Проверка типа данных
+    // Проверка типа данных для POST/PUT
     if (params.containsKey("type")) {
       String type = getFirstParam(params, "type");
       if (!DataType.isValid(type)) {
         result.addError(
             "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
+      }
+    }
+
+    // Проверка TTL для POST/PUT (если указан)
+    if (params.containsKey("ttl")) {
+      String ttl = getFirstParam(params, "ttl");
+      if (ttl != null && !ttl.isEmpty()) {
+        if (!isValidTTLFormat(ttl)) {
+          result.addError("Invalid TTL format. Valid formats: <number>[ms|s|m|h|d] or plain milliseconds");
+        }
       }
     }
 
@@ -95,7 +143,7 @@ public class RequestParametersValidator {
     // Проверка формата session_token
     String sessionToken = getFirstParam(params, "session_token");
     if (sessionToken != null && !sessionToken.matches("^[a-fA-F0-9-]+$")) {
-      result.addError("Session token can only contain letters, numbers and underscores");
+      result.addError("Session token can only contain letters, numbers and hyphens");
     }
 
     // Проверка формата key
@@ -105,28 +153,27 @@ public class RequestParametersValidator {
     }
   }
 
-  private void validateStorageRequest(String method, String uri, ValidationResult result) {
+  private void validateAuthRequest(String method, String uri, ValidationResult result) {
     Map<String, List<String>> params = parseUriParameters(uri);
 
-    if (!"POST".equalsIgnoreCase(method)) {
+    if (!"GET".equalsIgnoreCase(method)) {
       result.addError(
-          "Unsupported method for storage endpoint: " + method + ". Only POST is allowed");
+          "Unsupported method for auth endpoint: " + method + ". Only GET is allowed");
       return;
     }
 
-    Set<String> allowedParams = CREATE_STORAGE_PARAMS;
+    Set<String> allowedParams = GET_AUTH_PARAMS;
 
     // Проверка на лишние параметры
-    validateNoExtraParams(result, params, allowedParams, method + " storage");
+    validateNoExtraParams(result, params, allowedParams, method + " auth");
 
     if (!result.getValid()) {
       return;
     }
 
     // Обязательные параметры
-    for (String requiredParam : allowedParams) {
-      validateRequiredParam(result, params, requiredParam);
-    }
+    validateRequiredParam(result, params, "login");
+    validateRequiredParam(result, params, "password");
 
     // Проверка на единственность значений
     validateSingleValueParams(result, params, allowedParams);
@@ -140,16 +187,175 @@ public class RequestParametersValidator {
     validateStringLength(result, getFirstParam(params, "password"), "password", 6,
         MAX_PASSWORD_LENGTH);
 
-    // Дополнительная проверка логина
+    // Проверка формата логина
     String login = getFirstParam(params, "login");
     if (login != null && !login.matches("^[a-zA-Z0-9_]+$")) {
       result.addError("Login can only contain letters, numbers and underscores");
     }
+  }
 
-    // Проверка пароля на безопасность
-    String password = getFirstParam(params, "password");
-    if (password != null && password.length() < 6) {
-      result.addError("Password must be at least 6 characters long");
+  private void validateUserRequest(String method, String uri, ValidationResult result) {
+    Map<String, List<String>> params = parseUriParameters(uri);
+
+    // Определяем допустимые параметры в зависимости от метода
+    Set<String> allowedParams;
+    switch (method.toUpperCase()) {
+      case "PUT":
+        allowedParams = PUT_USER_PARAMS;
+        break;
+      case "POST":
+        allowedParams = POST_USER_PARAMS;
+        break;
+      case "DELETE":
+        allowedParams = DELETE_USER_PARAMS;
+        break;
+      default:
+        result.addError("Invalid method for user endpoint: " + method +
+            ". Allowed: PUT, POST, DELETE");
+        return;
+    }
+
+    // Проверка на лишние параметры
+    validateNoExtraParams(result, params, allowedParams, method + " user");
+
+    if (!result.getValid()) {
+      return;
+    }
+
+    // Обязательные параметры в зависимости от метода
+    switch (method.toUpperCase()) {
+      case "PUT":
+        validateRequiredParam(result, params, "session_token");
+        validateRequiredParam(result, params, "new_login");
+        validateRequiredParam(result, params, "password");
+        validateRequiredParam(result, params, "permission");
+        break;
+      case "POST":
+        validateRequiredParam(result, params, "session_token");
+        validateRequiredParam(result, params, "login");
+        // Для POST хотя бы один из optional параметров должен быть
+        boolean hasOptionalParam = params.containsKey("new_login") ||
+            params.containsKey("password") ||
+            params.containsKey("permission");
+        if (!hasOptionalParam) {
+          result.addError("At least one optional parameter must be specified for POST: " +
+              "new_login, password, or permission");
+        }
+        break;
+      case "DELETE":
+        validateRequiredParam(result, params, "session_token");
+        validateRequiredParam(result, params, "login");
+        break;
+    }
+
+    // Проверка на единственность значений
+    validateSingleValueParams(result, params, allowedParams);
+
+    if (!result.getValid()) {
+      return;
+    }
+
+    // Проверка длины и формата параметров
+    validateStringLength(result, getFirstParam(params, "session_token"), "session_token", 10,
+        MAX_TOKEN_LENGTH);
+
+    // Проверка session_token формата
+    String sessionToken = getFirstParam(params, "session_token");
+    if (sessionToken != null && !sessionToken.matches("^[a-fA-F0-9-]+$")) {
+      result.addError("Session token can only contain letters, numbers and hyphens");
+    }
+
+    // Проверка логина/нового логина
+    if (params.containsKey("login")) {
+      validateStringLength(result, getFirstParam(params, "login"), "login", 3, MAX_LOGIN_LENGTH);
+      String login = getFirstParam(params, "login");
+      if (login != null && !login.matches("^[a-zA-Z0-9_]+$")) {
+        result.addError("Login can only contain letters, numbers and underscores");
+      }
+    }
+
+    if (params.containsKey("new_login")) {
+      validateStringLength(result, getFirstParam(params, "new_login"), "new_login", 3, MAX_LOGIN_LENGTH);
+      String newLogin = getFirstParam(params, "new_login");
+      if (newLogin != null && !newLogin.matches("^[a-zA-Z0-9_]+$")) {
+        result.addError("New login can only contain letters, numbers and underscores");
+      }
+    }
+
+    // Проверка пароля
+    if (params.containsKey("password")) {
+      validateStringLength(result, getFirstParam(params, "password"), "password", 6,
+          MAX_PASSWORD_LENGTH);
+    }
+
+    // Проверка permission
+    if (params.containsKey("permission")) {
+      String permission = getFirstParam(params, "permission");
+      if (!PermissionType.isValid(permission)) {
+        result.addError(
+            "Invalid permission type. Allowed: " + String.join(", ", PermissionType.getAllValues()));
+      }
+    }
+  }
+
+  private void validateConfigRequest(String method, String uri, ValidationResult result) {
+    Map<String, List<String>> params = parseUriParameters(uri);
+
+    if (!"PUT".equalsIgnoreCase(method)) {
+      result.addError(
+          "Unsupported method for configuration endpoint: " + method + ". Only PUT is allowed");
+      return;
+    }
+
+    Set<String> allowedParams = PUT_CONFIG_PARAMS;
+
+    // Проверка на лишние параметры
+    validateNoExtraParams(result, params, allowedParams, method + " configuration");
+
+    if (!result.getValid()) {
+      return;
+    }
+
+    // Обязательные параметры
+    validateRequiredParam(result, params, "session_token");
+    validateRequiredParam(result, params, "maxmemory_policy");
+    validateRequiredParam(result, params, "maxStorageMemory");
+
+    // Проверка на единственность значений
+    validateSingleValueParams(result, params, allowedParams);
+
+    if (!result.getValid()) {
+      return;
+    }
+
+    // Проверка длины session_token
+    validateStringLength(result, getFirstParam(params, "session_token"), "session_token", 10,
+        MAX_TOKEN_LENGTH);
+
+    // Проверка session_token формата
+    String sessionToken = getFirstParam(params, "session_token");
+    if (sessionToken != null && !sessionToken.matches("^[a-fA-F0-9-]+$")) {
+      result.addError("Session token can only contain letters, numbers and hyphens");
+    }
+
+    // Проверка maxmemory_policy
+    String policy = getFirstParam(params, "maxmemory_policy");
+    if (!MaxMemoryPolicy.isValid(policy)) {
+      result.addError(
+          "Invalid maxmemory_policy. Allowed: " + String.join(", ", MaxMemoryPolicy.getAllValues()));
+    }
+
+    // Проверка maxStorageMemory
+    String maxMemory = getFirstParam(params, "maxStorageMemory");
+    if (maxMemory != null) {
+      try {
+        long memoryValue = Long.parseLong(maxMemory);
+        if (memoryValue <= 0) {
+          result.addError("maxStorageMemory must be a positive number");
+        }
+      } catch (NumberFormatException e) {
+        result.addError("maxStorageMemory must be a valid number");
+      }
     }
   }
 
@@ -180,6 +386,22 @@ public class RequestParametersValidator {
   private boolean isValidCacheMethod(String method) {
     return "GET".equals(method) || "POST".equals(method) ||
         "PUT".equals(method) || "DELETE".equals(method);
+  }
+
+  private boolean isValidTTLFormat(String ttl) {
+    if (ttl == null || ttl.trim().isEmpty()) {
+      return false;
+    }
+
+    String ttlLower = ttl.toLowerCase().trim();
+
+    // Проверяем различные форматы
+    return ttlLower.matches("^\\d+$") || // Просто число
+        ttlLower.matches("^\\d+ms$") || // Миллисекунды
+        ttlLower.matches("^\\d+s$") || // Секунды
+        ttlLower.matches("^\\d+m$") || // Минуты
+        ttlLower.matches("^\\d+h$") || // Часы
+        ttlLower.matches("^\\d+d$");   // Дни
   }
 
   private void validateNoExtraParams(ValidationResult result,

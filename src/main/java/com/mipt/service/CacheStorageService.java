@@ -1,95 +1,131 @@
 package com.mipt.service;
 
-import static com.mipt.service.TokenGenerators.generateStorageToken;
-
 import com.mipt.cache.CacheResult;
-import com.mipt.controller.DataType;
-import com.mipt.database.dao.CacheStorageDAO;
+import com.mipt.model.DataType;
 import com.mipt.model.CacheStorage;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
+import com.mipt.model.MaxMemoryPolicy;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class CacheStorageService {
-  private final CacheStorageDAO cacheStorageDAO;
-  private final Map<String, CacheStorage> sessionStorages; // sessionToken -> CacheStorage
 
-  public CacheStorageService(CacheStorageDAO cacheStorageDAO) {
-    this.cacheStorageDAO = cacheStorageDAO;
-    this.sessionStorages = new ConcurrentHashMap<>();
+  private CacheStorage database;
+  private final ScheduledExecutorService cleanupScheduler;
+
+  private long maxMemory;
+  private MaxMemoryPolicy maxMemoryPolicy;
+  private boolean canPolicyBeChanged;
+
+  public CacheStorageService() {
+    try {
+      Properties props = loadProperties();
+      this.maxMemory = Long.parseLong(props.getProperty("cache.max.memory", "104857600"));
+      this.maxMemoryPolicy = parsePolicy(props, "cache.max.memory.policy",
+          MaxMemoryPolicy.ALLKEYSLRU);
+      this.canPolicyBeChanged = true;
+
+    } catch (IOException e) {
+      this.maxMemory = 100 * 1024 * 1024;
+      this.maxMemoryPolicy = MaxMemoryPolicy.ALLKEYSLRU;
+      this.canPolicyBeChanged = true;
+    }
+
+    createCacheStorages();
+
+    this.cleanupScheduler = Executors.newSingleThreadScheduledExecutor();
+    this.cleanupScheduler.scheduleAtFixedRate(
+        this::cleanupDatabase,
+        1, 1, TimeUnit.MINUTES
+    );
   }
 
-  /**
-   * Регистрирует сессию с хранилищем
-   */
-  public void registerSession(String sessionToken, CacheStorage storage) {
-    sessionStorages.put(sessionToken, storage);
+  // Основные операции
+  public CacheResult post(String key, Object value, DataType dataType,
+      String user, Long ttlSeconds, long sizeBytes) {
+    if (canPolicyBeChanged) {
+      canPolicyBeChanged = false;
+    }
+    if (!database.containsKey(key)) {
+      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes);
+    }
+    return CacheResult.error("The key already exists");
   }
 
-  /**
-   * Удаляет хранилище сессии и сохраняет данные в БД
-   */
-  public void unregisterSession(String sessionToken) {
-    CacheStorage storage = sessionStorages.remove(sessionToken);
-    if (storage != null) {
-      cacheStorageDAO.saveDataFromCacheInDatabase(storage);
+  public CacheResult put(String key, Object value, DataType dataType,
+      String user, Long ttlSeconds, long sizeBytes) {
+    if (database.containsKey(key)) {
+      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes);
+    }
+    return CacheResult.error("The key not exists");
+  }
+
+  public CacheResult get(String key) {
+    return database.get(key);
+  }
+
+  public CacheResult delete(String key) {
+    return database.delete(key);
+  }
+
+  // Вспомогательные методы
+  private void cleanupDatabase() {
+    int removed = database.cleanupExpired();
+    if (removed > 0) {
+      System.out.println("Cleanup removed " + removed + " expired keys");
     }
   }
 
-  /**
-   * Создает новое хранилище и возвращает его
-   */
-  public CacheStorage createNewStorage() {
-    String storageToken = generateStorageToken(32);
-    CacheStorage storage = new CacheStorage(1000);
-    storage.setStorageToken(storageToken);
-    return storage;
-  }
-
-  /**
-   * Загружает существующее хранилище из БД
-   */
-  public CacheStorage loadStorage(String storageToken) {
-    CacheStorage storage = cacheStorageDAO.loadDataFromDatabaseByToken(storageToken);
-    if (storage == null) {
-      // Если не найдено в БД, создаем новое
-      storage = new CacheStorage(1000);
-      storage.setStorageToken(storageToken);
+  public void shutdown() {
+    cleanupScheduler.shutdown();
+    try {
+      cleanupScheduler.awaitTermination(5, TimeUnit.SECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
     }
-    return storage;
   }
 
-  /**
-   * CRUD операции - работают только с зарегистрированными сессиями
-   */
-  public CacheResult readData(String sessionToken, DataType dataType, String key) {
-    return getStorageBySession(sessionToken)
-        .map(storage -> storage.read(dataType, key))
-        .orElse(CacheResult.error("Invalid session"));
+  public CacheResult changePolicy(MaxMemoryPolicy maxMemoryPolicy, long totalMaxMemory) {
+    if (canPolicyBeChanged) {
+      this.maxMemoryPolicy = maxMemoryPolicy;
+      this.maxMemory = totalMaxMemory;
+      createCacheStorages();
+      return CacheResult.success();
+    }
+    return CacheResult.error("Can't change configuration");
   }
 
-  public CacheResult insertData(String sessionToken, DataType dataType, String key, Object value) {
-    return getStorageBySession(sessionToken)
-        .map(storage -> storage.post(dataType, key, value))
-        .orElse(CacheResult.error("Invalid session"));
+  private Properties loadProperties() throws IOException {
+    Properties props = new Properties();
+    try (InputStream input = getClass().getClassLoader()
+        .getResourceAsStream("application.properties")) {
+      if (input != null) {
+        props.load(input);
+      }
+    }
+    return props;
   }
 
-  public CacheResult updateData(String sessionToken, DataType dataType, String key, Object value) {
-    return getStorageBySession(sessionToken)
-        .map(storage -> storage.put(dataType, key, value))
-        .orElse(CacheResult.error("Invalid session"));
+  private MaxMemoryPolicy parsePolicy(Properties props, String key, MaxMemoryPolicy defaultValue) {
+    String value = props.getProperty(key);
+    if (value != null) {
+      try {
+        return MaxMemoryPolicy.valueOf(value.toUpperCase());
+      } catch (IllegalArgumentException e) {
+        // Оставляем defaultValue
+      }
+    }
+    return defaultValue;
   }
 
-  public CacheResult deleteData(String sessionToken, DataType dataType, String key) {
-    return getStorageBySession(sessionToken)
-        .map(storage -> storage.delete(dataType, key))
-        .orElse(CacheResult.error("Invalid session"));
+  private void createCacheStorages() {
+    database = new CacheStorage(maxMemory, maxMemoryPolicy);
   }
 
-  /**
-   * Получает хранилище по токену сессии
-   */
-  public Optional<CacheStorage> getStorageBySession(String sessionToken) {
-    return Optional.ofNullable(sessionStorages.get(sessionToken));
+  public long getmaxMemory() {
+    return maxMemory;
   }
 }

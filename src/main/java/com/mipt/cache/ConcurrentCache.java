@@ -48,4 +48,9 @@ public class ConcurrentCache implements Cache {
   public Set<Object> getKeys() {
     return storage.keySet();
   }
+
+  @Override
+  public Object freeMemory() {
+    return null;
+  }
 }

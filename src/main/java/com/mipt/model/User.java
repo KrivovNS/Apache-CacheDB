@@ -4,15 +4,15 @@ public class User {
   private Long id;
   private String username;
   private String password;
-  private String storageToken; // Токен хранилища пользователя
+  private PermissionType permissionType;
 
   public User() {}
 
-  public User(Long id, String username, String password, String storageToken) {
+  public User(Long id, String username, String password, PermissionType permissionType) {
     this.id = id;
     this.username = username;
     this.password = password;
-    this.storageToken = storageToken;
+    this.permissionType = permissionType;
   }
 
   // Геттеры и сеттеры
@@ -40,11 +40,9 @@ public class User {
     this.password = password;
   }
 
-  public String getStorageToken() {
-    return storageToken;
+  public void setPermissionType(PermissionType permissionType) {
+    this.permissionType = permissionType;
   }
 
-  public void setStorageToken(String storageToken) {
-    this.storageToken = storageToken;
-  }
+  public PermissionType getPermissionType() {return permissionType;}
 }

@@ -1,126 +1,166 @@
 package com.mipt.model;
 
-import com.mipt.cache.Cache;
-import com.mipt.cache.CacheResult;
-import com.mipt.cache.LRUCache;
-import com.mipt.controller.DataType;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import com.mipt.cache.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class CacheStorage {
 
-  private Long id;
-  private String storageToken;
+  private final Cache mainCache;      // Основное хранилище (LRU или Simple)
+  private final Cache ttlCache;       // Хранилище для ключей с TTL
+  private final AtomicLong memoryUsed;
+  private final long maxMemoryBytes;
+  private final MaxMemoryPolicy maxMemoryPolicy;
 
-  private final Map<DataType, LRUCache> typeCaches;
-  private final int defaultCapacity;
-
-  public CacheStorage(int defaultCapacity) {
-    this.defaultCapacity = defaultCapacity;
-    this.typeCaches = new ConcurrentHashMap<>();
+  // Конструктор
+  public CacheStorage(long maxMemoryBytes, MaxMemoryPolicy maxMemoryPolicy) {
+    this.maxMemoryBytes = maxMemoryBytes;
+    this.memoryUsed = new AtomicLong(0);
+    this.maxMemoryPolicy = maxMemoryPolicy;
+    CacheType cacheType;
+    switch (maxMemoryPolicy) {
+      case NOEVICTION -> cacheType = CacheType.SIMPLE;
+      case ALLKEYSLRU, VOLATILELRU -> cacheType = CacheType.LRU;
+      default -> cacheType = CacheType.LRU;
+    }
+    this.mainCache = createCache(cacheType);
+    this.ttlCache = createCache(cacheType);
   }
 
-  public CacheStorage() {
-    this(1000);
+  private Cache createCache(CacheType type) {
+    return (type == CacheType.LRU)
+        ? new LRUCache()
+        : new SimpleCache();
   }
 
-  public CacheStorage(Long id, String storageToken, int defaultCapacity) {
-    this(defaultCapacity);
-    this.id = id;
-    this.storageToken = storageToken;
-  }
+  // Основные операции
+  public CacheResult set(String key, Object value, DataType dataType,
+      String user, Long ttlSeconds, long sizeBytes) {
+    if (sizeBytes > maxMemoryBytes) {
+      return CacheResult.error("Data exceeding the memory limit");
+    }
 
-  private LRUCache getOrCreateTypeCache(DataType type) {
-    return typeCaches.computeIfAbsent(type, k -> new LRUCache(defaultCapacity));
-  }
-
-  public CacheResult read(DataType type, String key) {
     try {
-      LRUCache typeCache = typeCaches.get(type);
-      if (typeCache == null) {
-        return CacheResult.error("Cache for type " + type + " not found");
+      // Проверяем доступность памяти
+      if (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+        switch (maxMemoryPolicy) {
+          case NOEVICTION -> {
+            return CacheResult.error("Memory overflow");
+          }
+          case ALLKEYSLRU -> {
+            while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+              Object keyToDelete = mainCache.freeMemory();
+              CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
+              memoryUsed.addAndGet(-(cacheEntry.getSizeInBytes()));
+              if (cacheEntry.dataWithTtl()) {
+                ttlCache.remove(keyToDelete);
+              }
+              mainCache.remove(keyToDelete);
+            }
+          }
+          case VOLATILELRU -> {
+            while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+              Object keyToDelete;
+              if (ttlCache.size() > 0) {
+                keyToDelete = ttlCache.freeMemory();
+              } else {
+                keyToDelete = mainCache.freeMemory();
+              }
+              CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
+              memoryUsed.addAndGet(-(cacheEntry.getSizeInBytes()));
+              if (cacheEntry.dataWithTtl()) {
+                ttlCache.remove(keyToDelete);
+              }
+              ;
+              mainCache.remove(keyToDelete);
+            }
+          }
+        }
       }
 
-      Object value = typeCache.get(key);
-      if (value == null) {
-        return CacheResult.error("Key " + key + " not found in type " + type);
+      // Создаем CacheEntry
+      CacheEntry entry = new CacheEntry(
+          dataType, value, sizeBytes, user, ttlSeconds
+      );
+
+      // Сохраняем в основной кэш
+      mainCache.put(key, entry);
+      memoryUsed.addAndGet(sizeBytes);
+
+      // Если есть TTL, сохраняем в TTL кэш
+      if (ttlSeconds != null && ttlSeconds > 0) {
+        ttlCache.put(key, entry);
       }
 
-      return CacheResult.success(value);
+      return CacheResult.success("OK");
     } catch (Exception e) {
-      return CacheResult.error("Error reading cache: " + e.getMessage());
+      return CacheResult.error("SET error: " + e.getMessage());
     }
   }
 
-  public CacheResult post(DataType type, String key, Object value) {
+  public CacheResult get(String key) {
     try {
-      LRUCache typeCache = getOrCreateTypeCache(type);
-
-      if (typeCache.containsKey(key)) {
-        return CacheResult.error("Key " + key + " already exists in type " + type);
+      // Проверяем наличие в TTL кэше (быстрая проверка)
+      CacheEntry ttlEntry = (CacheEntry) ttlCache.get(key);
+      if (ttlEntry != null && ttlEntry.isExpired()) {
+        // Удаляем просроченный ключ
+        delete(key);
+        return CacheResult.error("Key expired");
       }
 
-      typeCache.put(key, value);
-      return CacheResult.success("Inserted successfully");
+      // Получаем из основного кэша
+      CacheEntry entry = (CacheEntry) mainCache.get(key);
+      if (entry == null) {
+        return CacheResult.error("Key not found");
+      }
+
+      // Обновляем статистику
+      entry.incrementAccessCount();
+
+      return CacheResult.success(entry.getData());
     } catch (Exception e) {
-      return CacheResult.error("Error inserting cache: " + e.getMessage());
+      return CacheResult.error("GET error: " + e.getMessage());
     }
   }
 
-  public CacheResult put(DataType type, String key, Object value) {
+  public CacheResult delete(String key) {
     try {
-      LRUCache typeCache = getOrCreateTypeCache(type);
-      if (!typeCache.containsKey(key)) {
-        return CacheResult.error("No value by key: " + key);
+      CacheEntry entry = (CacheEntry) mainCache.get(key);
+      if (entry != null) {
+        mainCache.remove(key);
+        ttlCache.remove(key);
+        memoryUsed.addAndGet(-entry.getSizeInBytes());
+        return CacheResult.success("Deleted");
       }
-      typeCache.put(key, value);
-      return CacheResult.success("Put successfully");
+      return CacheResult.error("Key not found");
     } catch (Exception e) {
-      return CacheResult.error("Error putting cache: " + e.getMessage());
+      return CacheResult.error("DEL error: " + e.getMessage());
     }
   }
 
-  public CacheResult delete(DataType type, String key) {
-    try {
-      LRUCache typeCache = typeCaches.get(type);
-      if (typeCache == null) {
-        return CacheResult.error("Cache for type " + type + " not found");
-      }
+  public boolean containsKey(String key) {
+    return mainCache.containsKey(key);
+  }
 
-      if (!typeCache.containsKey(key)) {
-        return CacheResult.error("Key " + key + " not found in type " + type);
+  // Методы для очистки просроченных ключей
+  public int cleanupExpired() {
+    int removed = 0;
+    // Проходим по TTL кэшу
+    for (Object key : ttlCache.getKeys()) {
+      CacheEntry entry = (CacheEntry) ttlCache.get(key);
+      if (entry != null && entry.isExpired()) {
+        delete((String) key);
+        removed++;
       }
-
-      typeCache.remove(key);
-      return CacheResult.success("Deleted successfully");
-    } catch (Exception e) {
-      return CacheResult.error("Error deleting cache: " + e.getMessage());
     }
+    return removed;
   }
 
-  // Геттеры и сеттеры
-  public Long getId() {
-    return id;
+  // Геттеры
+  public long getMemoryUsed() {
+    return memoryUsed.get();
   }
 
-  public void setId(Long id) {
-    this.id = id;
-  }
-
-  public String getStorageToken() {
-    return storageToken;
-  }
-
-  public void setStorageToken(String storageToken) {
-    this.storageToken = storageToken;
-  }
-
-  public Set<DataType> getCacheTypes() {
-    return typeCaches.keySet();
-  }
-
-  public Cache getCacheByType(DataType type) {
-    return typeCaches.get(type);
+  public long getMaxMemory() {
+    return maxMemoryBytes;
   }
 }

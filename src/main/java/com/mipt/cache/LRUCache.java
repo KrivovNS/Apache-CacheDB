@@ -5,35 +5,24 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
 public class LRUCache implements Cache {
-  private final int capacity;
+
   private final Map<Object, Node> storage;
   private final DoublyLinkedList accessOrder;
 
-  public LRUCache(int capacity) {
-    if (capacity <= 0) {
-      throw new IllegalArgumentException("Capacity must be positive");
-    }
-    this.capacity = capacity;
+  public LRUCache() {
     this.storage = new ConcurrentHashMap<>();
     this.accessOrder = new DoublyLinkedList();
   }
 
   @Override
   public synchronized void put(Object key, Object value) {
-    if (key == null || value == null) {
-      throw new IllegalArgumentException("Key and value cannot be null");
-    }
-
     if (storage.containsKey(key)) {
+      // Обновляем существующий
       Node node = storage.get(key);
       node.value = value;
       accessOrder.moveToHead(node);
-    } else {
-      if (storage.size() >= capacity) {
-        Node tail = accessOrder.removeTail();
-        storage.remove(tail.key);
-      }
 
+    } else {
       Node newNode = new Node(key, value);
       storage.put(key, newNode);
       accessOrder.addToHead(newNode);
@@ -42,7 +31,9 @@ public class LRUCache implements Cache {
 
   @Override
   public synchronized Object get(Object key) {
-    if (key == null) return null;
+    if (key == null) {
+      return null;
+    }
 
     Node node = storage.get(key);
     if (node == null) {
@@ -55,11 +46,23 @@ public class LRUCache implements Cache {
 
   @Override
   public synchronized void remove(Object key) {
-    if (key == null) return;
+    if (key == null) {
+      return;
+    }
 
     Node node = storage.remove(key);
     if (node != null) {
       accessOrder.removeNode(node);
+    }
+  }
+
+  @Override
+  public Object freeMemory() {
+    synchronized (this) {
+      if (accessOrder.tail != null) {
+        return accessOrder.tail.key;
+      }
+      return null;
     }
   }
 
@@ -84,12 +87,8 @@ public class LRUCache implements Cache {
     return storage.keySet();
   }
 
-  public int getCapacity() {
-    return capacity;
-  }
-
-  // Вспомогательные классы
   private static class Node {
+
     Object key;
     Object value;
     Node prev;
@@ -102,6 +101,7 @@ public class LRUCache implements Cache {
   }
 
   private static class DoublyLinkedList {
+
     private Node head;
     private Node tail;
 
@@ -138,7 +138,9 @@ public class LRUCache implements Cache {
     }
 
     Node removeTail() {
-      if (tail == null) return null;
+      if (tail == null) {
+        return null;
+      }
 
       Node oldTail = tail;
       removeNode(oldTail);

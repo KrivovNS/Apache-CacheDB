@@ -1,22 +1,20 @@
 package com.mipt.cache;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class SimpleCache implements Cache {
   private final Map<Object, Object> storage;
 
   public SimpleCache() {
-    this.storage = new HashMap<>();
+    this.storage = new ConcurrentHashMap<>();
   }
 
   @Override
-  public void put(Object key, Object value) {
-    if (key == null || value == null) {
-      throw new IllegalArgumentException("Key and value cannot be null");
-    }
-    storage.put(key, value);
+  public synchronized void put(Object key, Object value) {
+      storage.put(key, value);
   }
 
   @Override
@@ -25,18 +23,22 @@ public class SimpleCache implements Cache {
   }
 
   @Override
-  public void remove(Object key) {
+  public synchronized void remove(Object key) {
     storage.remove(key);
   }
 
   @Override
-  public void clear() {
+  public synchronized void clear() {
     storage.clear();
   }
 
   @Override
   public int size() {
     return storage.size();
+  }
+  @Override
+  public Object freeMemory(){
+    return null;
   }
 
   @Override

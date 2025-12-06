@@ -1,43 +1,46 @@
 package com.mipt.service;
 
 import com.mipt.model.Session;
-import com.mipt.model.CacheStorage;
+import com.mipt.model.User;
+import java.io.InputStream;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class SessionService {
-  private final CacheStorageService cacheStorageService;
   private final Map<String, Session> activeSessions; // sessionToken -> Session
-  private static final long SESSION_TTL_HOURS = 24;
-  private static long TEST_TTL_MINUTES = 1; // 1 минута для тестов
+  private final long sessionTtlHours;
 
-  public SessionService(CacheStorageService cacheStorageService) {
-    this.cacheStorageService = cacheStorageService;
+  public SessionService() {
     this.activeSessions = new ConcurrentHashMap<>();
-  }
 
-  /**
-   * Создает новую сессию для нового хранилища
-   */
-  public String createNewSession() {
-    CacheStorage storage = cacheStorageService.createNewStorage();
-    String sessionToken = TokenGenerators.generateSessionToken();
-    Session session = new Session(sessionToken, storage);
+    // Загружаем TTL из properties
+    Properties props = new Properties();
+    try (InputStream input = SessionService.class
+        .getClassLoader()
+        .getResourceAsStream("application.properties")) {
 
-    activeSessions.put(sessionToken, session);
-    cacheStorageService.registerSession(sessionToken, storage);
+      if (input != null) {
+        props.load(input);
+      }
+    } catch (Exception e) {
+      // Если файл не найден, используем значение по умолчанию
+    }
 
-    return sessionToken;
+    // Получаем значение из properties или используем значение по умолчанию
+    this.sessionTtlHours = Long.parseLong(
+        props.getProperty("session.ttl.hours", "24")
+    );
   }
 
   /**
    * Создает сессию для существующего хранилища
    * Если есть активная сессия для этого хранилища - обновляет ее
    */
-  public String createSessionForStorage(String storageToken) {
-    // Ищем активную сессию для этого хранилища
-    Optional<String> existingSession = findActiveSessionForStorage(storageToken);
+  public String createSessionForUser(User user) {
+    // Ищем активную сессию для этого юзера
+    Optional<String> existingSession = findActiveSessionForUser(user);
 
     if (existingSession.isPresent()) {
       // Освежаем существующую сессию
@@ -46,12 +49,10 @@ public class SessionService {
       return sessionToken;
     } else {
       // Создаем новую сессию
-      CacheStorage storage = cacheStorageService.loadStorage(storageToken);
       String sessionToken = TokenGenerators.generateSessionToken();
-      Session session = new Session(sessionToken, storage);
+      Session session = new Session(user, user.getPermissionType());
 
       activeSessions.put(sessionToken, session);
-      cacheStorageService.registerSession(sessionToken, storage);
 
       return sessionToken;
     }
@@ -62,17 +63,10 @@ public class SessionService {
    */
   public Optional<Session> getValidSession(String sessionToken) {
     Session session = activeSessions.get(sessionToken);
-    if (session != null && session.isValid(SESSION_TTL_HOURS)) {
+    if (session != null && session.isValid(sessionTtlHours)) {
       return Optional.of(session);
     }
     return Optional.empty();
-  }
-
-  /**
-   * Получает хранилище по валидной сессии
-   */
-  public Optional<CacheStorage> getStorageBySession(String sessionToken) {
-    return getValidSession(sessionToken).map(Session::getStorage);
   }
 
   /**
@@ -81,11 +75,25 @@ public class SessionService {
   public boolean isSessionValid(String sessionToken) {
     Session session = activeSessions.get(sessionToken);
     if (session != null) {
-      // Используем тестовый TTL если он установлен
-      long ttl = (TEST_TTL_MINUTES > 0) ? TEST_TTL_MINUTES : SESSION_TTL_HOURS * 60;
+      long ttl = sessionTtlHours * 60;
       return session.isValid(ttl);
     }
     return false;
+  }
+
+  /**
+   * Очищает просроченные сессии и соответствующие хранилища
+   * @return количество удаленных сессий
+   */
+  public int cleanupExpiredSessions() {
+    int removedCount = 0;
+    for (String sessionToken : activeSessions.keySet()) {
+      if (isSessionValid(sessionToken)) {
+        activeSessions.remove(sessionToken);
+        removedCount++;
+      }
+    }
+    return removedCount;
   }
 
   /**
@@ -96,32 +104,16 @@ public class SessionService {
   }
 
   /**
-   * Очищает просроченные сессии и соответствующие хранилища
-   * @return количество удаленных сессий
-   */
-  public int cleanupExpiredSessions() {
-    int removedCount = 0;
-    for (String sessionToken : activeSessions.keySet()) {
-      if (!isSessionValid(sessionToken)) {
-        activeSessions.remove(sessionToken);
-        cacheStorageService.unregisterSession(sessionToken);
-        removedCount++;
-      }
-    }
-    return removedCount;
-  }
-
-  /**
    * Находит активную сессию для хранилища
    */
-  private Optional<String> findActiveSessionForStorage(String storageToken) {
+  private Optional<String> findActiveSessionForUser(User targetUser) {
     return activeSessions.entrySet().stream()
         .filter(entry -> {
           Session session = entry.getValue();
-          CacheStorage storage = session.getStorage();
-          return session.isValid(SESSION_TTL_HOURS) &&
-              storage != null &&
-              storageToken.equals(storage.getStorageToken());
+          User user = session.getCreator();
+          return session.isValid(sessionTtlHours) &&
+              user != null &&
+              user.getUsername().equals(targetUser.getUsername());
         })
         .map(Map.Entry::getKey)
         .findFirst();
