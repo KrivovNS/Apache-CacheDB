@@ -1,92 +1,81 @@
 package com.mipt.service;
 
-import static com.mipt.model.MaxMemoryPolicy.ALLKEYSLRU;
-
 import com.mipt.cache.CacheResult;
 import com.mipt.model.DataType;
 import com.mipt.model.CacheStorage;
 import com.mipt.model.MaxMemoryPolicy;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public class CacheStorageService {
 
-  private static final int DEFAULT_DB_COUNT = 16;
-  private static final long DEFAULT_MAX_MEMORY = 100 * 1024 * 1024; // 100MB
-
-  private final CacheStorage[] databases;
+  private CacheStorage database;
   private final ScheduledExecutorService cleanupScheduler;
 
-  private int currentDbIndex = 0;
-  private long maxMemoryPerDb;
+  private long maxMemory;
   private MaxMemoryPolicy maxMemoryPolicy;
   private boolean canPolicyBeChanged;
 
   public CacheStorageService() {
-    this(DEFAULT_MAX_MEMORY, ALLKEYSLRU);
-  }
+    try {
+      Properties props = loadProperties();
+      this.maxMemory = Long.parseLong(props.getProperty("cache.max.memory", "104857600"));
+      this.maxMemoryPolicy = parsePolicy(props, "cache.max.memory.policy",
+          MaxMemoryPolicy.ALLKEYSLRU);
+      this.canPolicyBeChanged = true;
 
-  public CacheStorageService(long totalMaxMemory, MaxMemoryPolicy maxMemoryPolicy) {
-    this.maxMemoryPerDb = totalMaxMemory / DEFAULT_DB_COUNT;
-    this.maxMemoryPolicy = maxMemoryPolicy;
+    } catch (IOException e) {
+      this.maxMemory = 100 * 1024 * 1024;
+      this.maxMemoryPolicy = MaxMemoryPolicy.ALLKEYSLRU;
+      this.canPolicyBeChanged = true;
+    }
 
-    // Инициализируем 16 БД
-    this.databases = new CacheStorage[DEFAULT_DB_COUNT];
     createCacheStorages();
 
-    // Запускаем периодическую очистку просроченных ключей
     this.cleanupScheduler = Executors.newSingleThreadScheduledExecutor();
-    this.cleanupScheduler.scheduleAtFixedRate(this::cleanupAllDatabases,
-        1, 1, TimeUnit.MINUTES);
-    this.canPolicyBeChanged = true;
+    this.cleanupScheduler.scheduleAtFixedRate(
+        this::cleanupDatabase,
+        1, 1, TimeUnit.MINUTES
+    );
   }
 
-  // Выбор БД
-  public CacheResult selectDb(int dbIndex) {
-    if (dbIndex < 0 || dbIndex >= databases.length) {
-      return CacheResult.error("DB index out of range (0-15)");
-    }
-    currentDbIndex = dbIndex;
-    return CacheResult.success("Switched to DB " + dbIndex);
-  }
-
-  // Основные операции (работают с текущей БД)
+  // Основные операции
   public CacheResult post(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes) {
     if (canPolicyBeChanged) {
       canPolicyBeChanged = false;
     }
-    if (!databases[currentDbIndex].containsKey(key)) {
-      return databases[currentDbIndex].set(key, value, dataType, user, ttlSeconds, sizeBytes);
+    if (!database.containsKey(key)) {
+      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes);
     }
     return CacheResult.error("The key already exists");
   }
 
   public CacheResult put(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes) {
-    if (databases[currentDbIndex].containsKey(key)) {
-      return databases[currentDbIndex].set(key, value, dataType, user, ttlSeconds, sizeBytes);
+    if (database.containsKey(key)) {
+      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes);
     }
     return CacheResult.error("The key not exists");
   }
 
   public CacheResult get(String key) {
-    return databases[currentDbIndex].get(key);
+    return database.get(key);
   }
 
   public CacheResult delete(String key) {
-    return databases[currentDbIndex].delete(key);
+    return database.delete(key);
   }
 
   // Вспомогательные методы
-  private void cleanupAllDatabases() {
-    int totalRemoved = 0;
-    for (CacheStorage db : databases) {
-      totalRemoved += db.cleanupExpired();
-    }
-    if (totalRemoved > 0) {
-      System.out.println("Cleanup removed " + totalRemoved + " expired keys");
+  private void cleanupDatabase() {
+    int removed = database.cleanupExpired();
+    if (removed > 0) {
+      System.out.println("Cleanup removed " + removed + " expired keys");
     }
   }
 
@@ -102,25 +91,41 @@ public class CacheStorageService {
   public CacheResult changePolicy(MaxMemoryPolicy maxMemoryPolicy, long totalMaxMemory) {
     if (canPolicyBeChanged) {
       this.maxMemoryPolicy = maxMemoryPolicy;
-      this.maxMemoryPerDb = totalMaxMemory / DEFAULT_DB_COUNT;
+      this.maxMemory = totalMaxMemory;
       createCacheStorages();
       return CacheResult.success();
     }
     return CacheResult.error("Can't change configuration");
   }
 
-  private void createCacheStorages() {
-    for (int i = 0; i < DEFAULT_DB_COUNT; i++) {
-      databases[i] = new CacheStorage(maxMemoryPerDb, maxMemoryPolicy);
+  private Properties loadProperties() throws IOException {
+    Properties props = new Properties();
+    try (InputStream input = getClass().getClassLoader()
+        .getResourceAsStream("application.properties")) {
+      if (input != null) {
+        props.load(input);
+      }
     }
+    return props;
   }
 
-  // Геттеры
-  public int getCurrentDbIndex() {
-    return currentDbIndex;
+  private MaxMemoryPolicy parsePolicy(Properties props, String key, MaxMemoryPolicy defaultValue) {
+    String value = props.getProperty(key);
+    if (value != null) {
+      try {
+        return MaxMemoryPolicy.valueOf(value.toUpperCase());
+      } catch (IllegalArgumentException e) {
+        // Оставляем defaultValue
+      }
+    }
+    return defaultValue;
   }
 
-  public long getMaxMemoryPerDb() {
-    return maxMemoryPerDb;
+  private void createCacheStorages() {
+    database = new CacheStorage(maxMemory, maxMemoryPolicy);
+  }
+
+  public long getmaxMemory() {
+    return maxMemory;
   }
 }

@@ -3,8 +3,7 @@ package com.mipt.model;
 public enum PermissionType {
   SUPERADMIN("superadmin"),
   ADMIN("admin"),
-  READER("reader"),
-  ISOLATED("isolated");
+  READER("reader");
 
   private final String value;
 

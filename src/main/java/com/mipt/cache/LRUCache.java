@@ -58,11 +58,11 @@ public class LRUCache implements Cache {
 
   @Override
   public Object freeMemory() {
-    Node tail = accessOrder.tail;
-    try {
-      return tail.key;
-    } catch (NullPointerException e) {
-      throw new NullPointerException();
+    synchronized (this) {
+      if (accessOrder.tail != null) {
+        return accessOrder.tail.key;
+      }
+      return null;
     }
   }
 
