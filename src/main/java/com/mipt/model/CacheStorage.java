@@ -1,6 +1,7 @@
 package com.mipt.model;
 
 import com.mipt.cache.*;
+import com.mipt.controller.DataTypeValidator;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class CacheStorage {
@@ -32,9 +33,22 @@ public class CacheStorage {
         : new SimpleCache();
   }
 
-  // Основные операции
+  // Основные операции с валидацией данных
   public CacheResult set(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes) {
+
+    // ВАЛИДАЦИЯ ДАННЫХ
+    CacheResult validationResult = validateData(value, dataType);
+    if (!validationResult.isSuccess()) {
+      return validationResult;
+    }
+
+    // Обрабатываем данные для хранения
+    Object processedValue = processValueForStorage(value, dataType);
+    if (processedValue == null) {
+      return CacheResult.error("Failed to process data for storage");
+    }
+
     if (sizeBytes > maxMemoryBytes) {
       return CacheResult.error("Data exceeding the memory limit");
     }
@@ -79,7 +93,7 @@ public class CacheStorage {
 
       // Создаем CacheEntry
       CacheEntry entry = new CacheEntry(
-          dataType, value, sizeBytes, user, ttlSeconds
+          dataType, processedValue, sizeBytes, user, ttlSeconds
       );
 
       // Сохраняем в основной кэш
@@ -116,9 +130,87 @@ public class CacheStorage {
       // Обновляем статистику
       entry.incrementAccessCount();
 
-      return CacheResult.success(entry.getData());
+      // Форматируем данные для ответа в зависимости от типа
+      String formattedData = formatDataForResponse(entry.getData(), entry.getDataType());
+      return CacheResult.success(formattedData);
     } catch (Exception e) {
       return CacheResult.error("GET error: " + e.getMessage());
+    }
+  }
+
+  // Вспомогательные методы для валидации данных
+  private CacheResult validateData(Object value, DataType dataType) {
+    if (value == null) {
+      return CacheResult.error("Data cannot be null");
+    }
+
+    // Проверяем строковые данные
+    if (value instanceof String) {
+      String stringValue = (String) value;
+
+      // Проверяем валидность в зависимости от типа
+      boolean isValid = DataTypeValidator.validateDataByType(
+          stringValue,
+          dataType.getValue()
+      );
+
+      if (!isValid) {
+        String errorMessage = getValidationErrorMessage(stringValue, dataType);
+        return CacheResult.error(errorMessage);
+      }
+    }
+    // Для byte[] не нужна дополнительная валидация - это уже бинарные данные
+    else if (value instanceof byte[]) {
+      // byte[] всегда валидны для типа BYTES
+      if (dataType != DataType.BYTES) {
+        return CacheResult.error("byte[] data can only be used with BYTES data type");
+      }
+    }
+    else {
+      return CacheResult.error("Unsupported data type: " + value.getClass().getName());
+    }
+
+    return CacheResult.success();
+  }
+
+  private Object processValueForStorage(Object value, DataType dataType) {
+    try {
+      if (value instanceof String) {
+        return DataTypeValidator.processDataForStorage((String) value, dataType.getValue());
+      }
+      // byte[] уже обработаны, возвращаем как есть
+      else if (value instanceof byte[]) {
+        return value;
+      }
+    } catch (IllegalArgumentException e) {
+      return null;
+    }
+
+    return value;
+  }
+
+  private String getValidationErrorMessage(String data, DataType dataType) {
+    switch (dataType) {
+      case JSON:
+        return "Invalid JSON format. Please provide valid JSON data.";
+      case BYTES:
+        return "Invalid Base64 format. Please provide valid Base64 encoded data.";
+      case STRING:
+        if (data == null || data.trim().isEmpty()) {
+          return "String data cannot be null or empty.";
+        }
+        return "Invalid string data.";
+      default:
+        return "Invalid data format for type: " + dataType.getValue();
+    }
+  }
+
+  private String formatDataForResponse(Object data, DataType dataType) {
+    try {
+      return DataTypeValidator.formatDataForResponse(data, dataType.getValue());
+    } catch (Exception e) {
+      // В случае ошибки форматирования, возвращаем строковое представление
+      return data != null ? data.toString() : "";
     }
   }
 
@@ -162,5 +254,11 @@ public class CacheStorage {
 
   public long getMaxMemory() {
     return maxMemoryBytes;
+  }
+
+  // Метод для получения типа данных по ключу
+  public DataType getDataType(String key) {
+    CacheEntry entry = (CacheEntry) mainCache.get(key);
+    return entry != null ? entry.getDataType() : null;
   }
 }
