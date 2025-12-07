@@ -50,7 +50,7 @@ public class RequestParametersValidator {
   );
 
   private static final Set<String> PUT_CONFIG_PARAMS = Set.of(
-      "session_token", "maxmemory_policy", "maxStorageMemory"
+      "session_token", "maxmemory_policy", "max_storage_memory"
   );
 
   // Основной метод валидации для NettyHandler
@@ -319,7 +319,7 @@ public class RequestParametersValidator {
     // Обязательные параметры
     validateRequiredParam(result, params, "session_token");
     validateRequiredParam(result, params, "maxmemory_policy");
-    validateRequiredParam(result, params, "maxStorageMemory");
+    validateRequiredParam(result, params, "max_storage_memory");
 
     // Проверка на единственность значений
     validateSingleValueParams(result, params, allowedParams);
@@ -345,16 +345,16 @@ public class RequestParametersValidator {
           "Invalid maxmemory_policy. Allowed: " + String.join(", ", MaxMemoryPolicy.getAllValues()));
     }
 
-    // Проверка maxStorageMemory
-    String maxMemory = getFirstParam(params, "maxStorageMemory");
+    // Проверка max_storage_memory
+    String maxMemory = getFirstParam(params, "max_storage_memory");
     if (maxMemory != null) {
       try {
         long memoryValue = Long.parseLong(maxMemory);
         if (memoryValue <= 0) {
-          result.addError("maxStorageMemory must be a positive number");
+          result.addError("max_storage_memory must be a positive number");
         }
       } catch (NumberFormatException e) {
-        result.addError("maxStorageMemory must be a valid number");
+        result.addError("max_storage_memory must be a valid number");
       }
     }
   }

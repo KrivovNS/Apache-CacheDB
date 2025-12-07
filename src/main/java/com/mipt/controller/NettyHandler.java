@@ -367,11 +367,11 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
   private FullHttpResponse handleUpdateConfiguration(Map<String, String> params) {
     String maxMemoryPolicyParam = params.get("maxmemory_policy");
-    String maxStorageMemoryParam = params.get("maxStorageMemory");
+    String maxStorageMemoryParam = params.get("max_storage_memory");
 
     if (maxMemoryPolicyParam == null || maxStorageMemoryParam == null) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
-          "Missing required parameters: maxmemory_policy and maxStorageMemory");
+          "Missing required parameters: maxmemory_policy and max_storage_memory");
     }
 
     try {
@@ -389,11 +389,11 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         maxStorageMemory = Long.parseLong(maxStorageMemoryParam);
         if (maxStorageMemory <= 0) {
           return createResponse(HttpResponseStatus.BAD_REQUEST,
-              "maxStorageMemory must be positive");
+              "max_storage_memory must be positive");
         }
       } catch (NumberFormatException e) {
         return createResponse(HttpResponseStatus.BAD_REQUEST,
-            "Invalid maxStorageMemory format. Must be a number");
+            "Invalid max_storage_memory format. Must be a number");
       }
 
       // Изменяем конфигурацию кэш-сервиса
@@ -713,7 +713,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         "DELETE /user?session_token=TOKEN&login=LOGIN (delete user)\n\n" +
         "Permissions: " + String.join(", ", PermissionType.getAllValues()) + "\n\n" +
         "CONFIGURATION (SUPERADMIN only):\n" +
-        "PUT    /configuration?session_token=TOKEN&maxmemory_policy=POLICY&maxStorageMemory=SIZE\n\n" +
+        "PUT    /configuration?session_token=TOKEN&maxmemory_policy=POLICY&max_storage_memory=SIZE\n\n" +
         "Max memory policies: " + String.join(", ", MaxMemoryPolicy.getAllValues()) + "\n\n" +
         "Examples:\n" +
         "  Auth:         curl \"http://localhost:8080/auth?login=default&password=admin\"\n" +
