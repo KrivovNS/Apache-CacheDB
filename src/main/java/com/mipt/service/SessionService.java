@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class SessionService {
   private final Map<String, Session> activeSessions; // sessionToken -> Session
-  private final long sessionTtlHours;
+  private final long sessionTtlMinutes;
 
   public SessionService() {
     this.activeSessions = new ConcurrentHashMap<>();
@@ -29,8 +29,8 @@ public class SessionService {
     }
 
     // Получаем значение из properties или используем значение по умолчанию
-    this.sessionTtlHours = Long.parseLong(
-        props.getProperty("session.ttl.hours", "24")
+    this.sessionTtlMinutes = Long.parseLong(
+        props.getProperty("session.ttl.minutes", "1440")
     );
   }
 
@@ -63,7 +63,7 @@ public class SessionService {
    */
   public Optional<Session> getValidSession(String sessionToken) {
     Session session = activeSessions.get(sessionToken);
-    if (session != null && session.isValid(sessionTtlHours)) {
+    if (session != null && session.isValid(sessionTtlMinutes)) {
       return Optional.of(session);
     }
     return Optional.empty();
@@ -75,7 +75,7 @@ public class SessionService {
   public boolean isSessionValid(String sessionToken) {
     Session session = activeSessions.get(sessionToken);
     if (session != null) {
-      long ttl = sessionTtlHours * 60;
+      long ttl = sessionTtlMinutes;
       return session.isValid(ttl);
     }
     return false;
@@ -88,7 +88,7 @@ public class SessionService {
   public int cleanupExpiredSessions() {
     int removedCount = 0;
     for (String sessionToken : activeSessions.keySet()) {
-      if (isSessionValid(sessionToken)) {
+      if (!isSessionValid(sessionToken)) {
         activeSessions.remove(sessionToken);
         removedCount++;
       }
@@ -104,18 +104,23 @@ public class SessionService {
   }
 
   /**
-   * Находит активную сессию для хранилища
+   * Находит активную сессию для пользователя
    */
   private Optional<String> findActiveSessionForUser(User targetUser) {
     return activeSessions.entrySet().stream()
         .filter(entry -> {
           Session session = entry.getValue();
           User user = session.getCreator();
-          return session.isValid(sessionTtlHours) &&
+          return session.isValid(sessionTtlMinutes) &&
               user != null &&
               user.getUsername().equals(targetUser.getUsername());
         })
         .map(Map.Entry::getKey)
         .findFirst();
+  }
+
+  public void removeSessionIfExists(User user) {
+    Optional<String> userSession = findActiveSessionForUser(user);
+    userSession.ifPresent(activeSessions::remove);
   }
 }
