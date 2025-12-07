@@ -37,11 +37,11 @@ public class RequestParametersValidator {
       "login", "password"
   );
 
-  private static final Set<String> PUT_USER_PARAMS = Set.of(
-      "session_token", "new_login", "password", "permission"
+  private static final Set<String> POST_USER_PARAMS = Set.of(
+      "session_token", "login", "password", "permission"
   );
 
-  private static final Set<String> POST_USER_PARAMS = Set.of(
+  private static final Set<String> PUT_USER_PARAMS = Set.of(
       "session_token", "login", "new_login", "password", "permission"
   );
 
@@ -224,21 +224,21 @@ public class RequestParametersValidator {
 
     // Обязательные параметры в зависимости от метода
     switch (method.toUpperCase()) {
-      case "PUT":
-        validateRequiredParam(result, params, "session_token");
-        validateRequiredParam(result, params, "new_login");
-        validateRequiredParam(result, params, "password");
-        validateRequiredParam(result, params, "permission");
-        break;
       case "POST":
         validateRequiredParam(result, params, "session_token");
         validateRequiredParam(result, params, "login");
-        // Для POST хотя бы один из optional параметров должен быть
+        validateRequiredParam(result, params, "password");
+        validateRequiredParam(result, params, "permission");
+        break;
+      case "PUT":
+        validateRequiredParam(result, params, "session_token");
+        validateRequiredParam(result, params, "login");
+        // Для PUT хотя бы один из optional параметров должен быть
         boolean hasOptionalParam = params.containsKey("new_login") ||
             params.containsKey("password") ||
             params.containsKey("permission");
         if (!hasOptionalParam) {
-          result.addError("At least one optional parameter must be specified for POST: " +
+          result.addError("At least one optional parameter must be specified for PUT: " +
               "new_login, password, or permission");
         }
         break;
