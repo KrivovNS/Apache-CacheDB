@@ -332,8 +332,16 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     FullHttpResponse response;
 
     try {
-      // Проверяем сессию
       String sessionToken = params.get("session_token");
+
+      // Проверяем валидность сессии
+      if (!isSessionValid(sessionToken)) {
+        response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
+        ctx.writeAndFlush(response);
+        return;
+      }
+
+      // Проверяем сессию
       if (!isSuperAdminSession(sessionToken)) {
         response = createResponse(HttpResponseStatus.FORBIDDEN,
             "Only SUPERADMIN users can modify configuration");
@@ -412,8 +420,16 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     FullHttpResponse response;
 
     try {
-      // Проверяем сессию для всех операций с пользователями
       String sessionToken = params.get("session_token");
+
+      // Проверяем валидность сессии
+      if (!isSessionValid(sessionToken)) {
+        response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
+        ctx.writeAndFlush(response);
+        return;
+      }
+
+      // Проверяем сессию для всех операций с пользователями
       if (!isSuperAdminSession(sessionToken)) {
         response = createResponse(HttpResponseStatus.FORBIDDEN,
             "Only SUPERADMIN users can manage users");
@@ -441,7 +457,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   }
 
   private FullHttpResponse handleCreateUser(Map<String, String> params) {
-    String newLogin = params.get("new_login");
+    String newLogin = params.get("login");
     String password = params.get("password");
     String permissionParam = params.get("permission");
 
@@ -512,6 +528,8 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
             "User with login '" + login + "' not found");
       }
 
+      sessionService.removeSessionIfExists(existingUser);
+
       // Парсим permission если указан
       PermissionType permissionType = null;
       if (permissionParam != null) {
@@ -570,6 +588,8 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
             "Failed to delete user");
       }
+
+      sessionService.removeSessionIfExists(existingUser);
 
       return createResponse(HttpResponseStatus.OK,
           "User deleted successfully\n" +
@@ -688,8 +708,8 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         "Data types: " + String.join(", ", DataType.getAllValues()) + "\n" +
         "TTL format: <number>[ms|s|m|h|d] or plain milliseconds\n\n" +
         "USER MANAGEMENT (SUPERADMIN only):\n" +
-        "PUT    /user?session_token=TOKEN&new_login=LOGIN&password=PASSWORD&permission=PERMISSION (create user)\n" +
-        "POST   /user?session_token=TOKEN&login=LOGIN&[new_login=LOGIN]&[password=PASSWORD]&[permission=PERMISSION] (update user)\n" +
+        "POST    /user?session_token=TOKEN&new_login=LOGIN&password=PASSWORD&permission=PERMISSION (create user)\n" +
+        "PUT   /user?session_token=TOKEN&login=LOGIN&[new_login=LOGIN]&[password=PASSWORD]&[permission=PERMISSION] (update user)\n" +
         "DELETE /user?session_token=TOKEN&login=LOGIN (delete user)\n\n" +
         "Permissions: " + String.join(", ", PermissionType.getAllValues()) + "\n\n" +
         "CONFIGURATION (SUPERADMIN only):\n" +
