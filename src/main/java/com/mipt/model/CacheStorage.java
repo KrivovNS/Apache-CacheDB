@@ -12,7 +12,6 @@ public class CacheStorage {
   private final long maxMemoryBytes;
   private final MaxMemoryPolicy maxMemoryPolicy;
 
-  // Конструктор
   public CacheStorage(long maxMemoryBytes, MaxMemoryPolicy maxMemoryPolicy) {
     this.maxMemoryBytes = maxMemoryBytes;
     this.memoryUsed = new AtomicLong(0);
@@ -33,79 +32,106 @@ public class CacheStorage {
         : new SimpleCache();
   }
 
-  // Основные операции с валидацией данных
+  // Основные операции
   public CacheResult set(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes) {
 
-    // ВАЛИДАЦИЯ ДАННЫХ
-    CacheResult validationResult = validateData(value, dataType);
-    if (!validationResult.isSuccess()) {
-      return validationResult;
-    }
-
-    // Обрабатываем данные для хранения
-    Object processedValue = processValueForStorage(value, dataType);
-    if (processedValue == null) {
-      return CacheResult.error("Failed to process data for storage");
-    }
-
-    if (sizeBytes > maxMemoryBytes) {
-      return CacheResult.error("Data exceeding the memory limit");
-    }
-
     try {
-      // Проверяем доступность памяти
-      if (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
-        switch (maxMemoryPolicy) {
-          case NOEVICTION -> {
-            return CacheResult.error("Memory overflow");
-          }
-          case ALLKEYSLRU -> {
-            while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
-              Object keyToDelete = mainCache.freeMemory();
-              CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
-              memoryUsed.addAndGet(-(cacheEntry.getSizeInBytes()));
-              if (cacheEntry.dataWithTtl()) {
-                ttlCache.remove(keyToDelete);
+      String dataString;
+      if (value == null) {
+        return CacheResult.error("Value cannot be null");
+      } else if (value instanceof String) {
+        dataString = (String) value;
+      } else if (value instanceof byte[]) {
+        // Для байтового массива преобразуем в Base64 для валидации
+        dataString = java.util.Base64.getEncoder().encodeToString((byte[]) value);
+      } else {
+        dataString = value.toString();
+      }
+
+      if (!DataTypeValidator.validateDataByType(dataString, dataType.getValue())) {
+        return CacheResult.error("Invalid data format for type: " + dataType);
+      }
+
+      // Преобразование данных для хранения
+      Object processedValue;
+      try {
+        processedValue = DataTypeValidator.processDataForStorage(
+            dataString,
+            dataType.getValue()
+        );
+      } catch (IllegalArgumentException e) {
+        return CacheResult.error("Data processing error: " + e.getMessage());
+      }
+
+      if (sizeBytes > maxMemoryBytes) {
+        return CacheResult.error("Data exceeding the memory limit");
+      }
+
+      try {
+        if (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+          switch (maxMemoryPolicy) {
+            case NOEVICTION -> {
+              return CacheResult.error("Memory overflow");
+            }
+            case ALLKEYSLRU -> {
+              while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+                Object keyToDelete = mainCache.freeMemory();
+                if (keyToDelete == null) break;
+
+                CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
+                if (cacheEntry != null) {
+                  memoryUsed.addAndGet(-cacheEntry.getSizeInBytes());
+                  if (cacheEntry.dataWithTtl()) {
+                    ttlCache.remove(keyToDelete);
+                  }
+                  mainCache.remove(keyToDelete);
+                }
               }
-              mainCache.remove(keyToDelete);
+            }
+            case VOLATILELRU -> {
+              while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+                Object keyToDelete;
+                if (ttlCache.size() > 0) {
+                  keyToDelete = ttlCache.freeMemory();
+                } else {
+                  keyToDelete = mainCache.freeMemory();
+                }
+
+                if (keyToDelete == null) break;
+
+                CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
+                if (cacheEntry != null) {
+                  memoryUsed.addAndGet(-cacheEntry.getSizeInBytes());
+                  if (cacheEntry.dataWithTtl()) {
+                    ttlCache.remove(keyToDelete);
+                  }
+                  mainCache.remove(keyToDelete);
+                }
+              }
             }
           }
-          case VOLATILELRU -> {
-            while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
-              Object keyToDelete;
-              if (ttlCache.size() > 0) {
-                keyToDelete = ttlCache.freeMemory();
-              } else {
-                keyToDelete = mainCache.freeMemory();
-              }
-              CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
-              memoryUsed.addAndGet(-(cacheEntry.getSizeInBytes()));
-              if (cacheEntry.dataWithTtl()) {
-                ttlCache.remove(keyToDelete);
-              }
-              ;
-              mainCache.remove(keyToDelete);
-            }
+
+          if (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+            return CacheResult.error("Not enough memory even after eviction");
           }
         }
+
+        CacheEntry entry = new CacheEntry(
+            dataType, processedValue, sizeBytes, user, ttlSeconds
+        );
+
+        mainCache.put(key, entry);
+        memoryUsed.addAndGet(sizeBytes);
+
+        if (ttlSeconds != null && ttlSeconds > 0) {
+          ttlCache.put(key, entry);
+        }
+
+        return CacheResult.success("OK");
+      } catch (Exception e) {
+        return CacheResult.error("SET error: " + e.getMessage());
       }
-
-      // Создаем CacheEntry
-      CacheEntry entry = new CacheEntry(
-          dataType, processedValue, sizeBytes, user, ttlSeconds
-      );
-
-      // Сохраняем в основной кэш
-      mainCache.put(key, entry);
-      memoryUsed.addAndGet(sizeBytes);
-
-      // Если есть TTL, сохраняем в TTL кэш
-      if (ttlSeconds != null && ttlSeconds > 0) {
-        ttlCache.put(key, entry);
-      }
-
-      return CacheResult.success("OK");
     } catch (Exception e) {
       return CacheResult.error("SET error: " + e.getMessage());
     }
@@ -113,104 +139,32 @@ public class CacheStorage {
 
   public CacheResult get(String key) {
     try {
-      // Проверяем наличие в TTL кэше (быстрая проверка)
       CacheEntry ttlEntry = (CacheEntry) ttlCache.get(key);
       if (ttlEntry != null && ttlEntry.isExpired()) {
-        // Удаляем просроченный ключ
         delete(key);
         return CacheResult.error("Key expired");
       }
 
-      // Получаем из основного кэша
       CacheEntry entry = (CacheEntry) mainCache.get(key);
       if (entry == null) {
         return CacheResult.error("Key not found");
       }
 
-      // Обновляем статистику
       entry.incrementAccessCount();
 
-      // Форматируем данные для ответа в зависимости от типа
-      String formattedData = formatDataForResponse(entry.getData(), entry.getDataType());
+      String formattedData;
+      try {
+        formattedData = DataTypeValidator.formatDataForResponse(
+            entry.getData(),
+            entry.getDataType().getValue()
+        );
+      } catch (IllegalArgumentException e) {
+        return CacheResult.error("Data formatting error: " + e.getMessage());
+      }
+
       return CacheResult.success(formattedData);
     } catch (Exception e) {
       return CacheResult.error("GET error: " + e.getMessage());
-    }
-  }
-
-  // Вспомогательные методы для валидации данных
-  private CacheResult validateData(Object value, DataType dataType) {
-    if (value == null) {
-      return CacheResult.error("Data cannot be null");
-    }
-
-    // Проверяем строковые данные
-    if (value instanceof String) {
-      String stringValue = (String) value;
-
-      // Проверяем валидность в зависимости от типа
-      boolean isValid = DataTypeValidator.validateDataByType(
-          stringValue,
-          dataType.getValue()
-      );
-
-      if (!isValid) {
-        String errorMessage = getValidationErrorMessage(stringValue, dataType);
-        return CacheResult.error(errorMessage);
-      }
-    }
-    // Для byte[] не нужна дополнительная валидация - это уже бинарные данные
-    else if (value instanceof byte[]) {
-      // byte[] всегда валидны для типа BYTES
-      if (dataType != DataType.BYTES) {
-        return CacheResult.error("byte[] data can only be used with BYTES data type");
-      }
-    }
-    else {
-      return CacheResult.error("Unsupported data type: " + value.getClass().getName());
-    }
-
-    return CacheResult.success();
-  }
-
-  private Object processValueForStorage(Object value, DataType dataType) {
-    try {
-      if (value instanceof String) {
-        return DataTypeValidator.processDataForStorage((String) value, dataType.getValue());
-      }
-      // byte[] уже обработаны, возвращаем как есть
-      else if (value instanceof byte[]) {
-        return value;
-      }
-    } catch (IllegalArgumentException e) {
-      return null;
-    }
-
-    return value;
-  }
-
-  private String getValidationErrorMessage(String data, DataType dataType) {
-    switch (dataType) {
-      case JSON:
-        return "Invalid JSON format. Please provide valid JSON data.";
-      case BYTES:
-        return "Invalid Base64 format. Please provide valid Base64 encoded data.";
-      case STRING:
-        if (data == null || data.trim().isEmpty()) {
-          return "String data cannot be null or empty.";
-        }
-        return "Invalid string data.";
-      default:
-        return "Invalid data format for type: " + dataType.getValue();
-    }
-  }
-
-  private String formatDataForResponse(Object data, DataType dataType) {
-    try {
-      return DataTypeValidator.formatDataForResponse(data, dataType.getValue());
-    } catch (Exception e) {
-      // В случае ошибки форматирования, возвращаем строковое представление
-      return data != null ? data.toString() : "";
     }
   }
 
@@ -247,7 +201,6 @@ public class CacheStorage {
     return removed;
   }
 
-  // Геттеры
   public long getMemoryUsed() {
     return memoryUsed.get();
   }
@@ -256,7 +209,6 @@ public class CacheStorage {
     return maxMemoryBytes;
   }
 
-  // Метод для получения типа данных по ключу
   public DataType getDataType(String key) {
     CacheEntry entry = (CacheEntry) mainCache.get(key);
     return entry != null ? entry.getDataType() : null;
