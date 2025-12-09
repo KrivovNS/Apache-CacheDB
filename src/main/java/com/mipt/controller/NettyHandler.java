@@ -725,7 +725,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         "DELETE /user?session_token=TOKEN&login=LOGIN (delete user)\n\n" +
         "Permissions: " + String.join(", ", PermissionType.getAllValues()) + "\n\n" +
         "CONFIGURATION (SUPERADMIN only):\n" +
-        "PUT    /configuration?session_token=TOKEN&maxmemory_policy=POLICY&maxStorageMemory=SIZE\n\n" +
+        "PUT    /configuration?session_token=TOKEN&maxmemory_policy=POLICY&max_storage_memory=SIZE\n\n" +
         "Max memory policies: " + String.join(", ", MaxMemoryPolicy.getAllValues()) + "\n\n" +
         "Examples:\n" +
         "  Auth:         curl \"http://localhost:8080/auth?login=default&password=admin\"\n" +
