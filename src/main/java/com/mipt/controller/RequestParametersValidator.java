@@ -50,7 +50,7 @@ public class RequestParametersValidator {
   );
 
   private static final Set<String> PUT_CONFIG_PARAMS = Set.of(
-      "session_token", "maxmemory_policy", "maxStorageMemory"
+      "session_token", "max_memory_policy", "max_storage_memory", "persistence"
   );
 
   // Основной метод валидации для NettyHandler
@@ -318,8 +318,9 @@ public class RequestParametersValidator {
 
     // Обязательные параметры
     validateRequiredParam(result, params, "session_token");
-    validateRequiredParam(result, params, "maxmemory_policy");
-    validateRequiredParam(result, params, "maxStorageMemory");
+    validateRequiredParam(result, params, "max_memory_policy");
+    validateRequiredParam(result, params, "max_storage_memory");
+    validateRequiredParam(result, params, "persistence");
 
     // Проверка на единственность значений
     validateSingleValueParams(result, params, allowedParams);
@@ -338,25 +339,36 @@ public class RequestParametersValidator {
       result.addError("Session token can only contain letters, numbers and hyphens");
     }
 
-    // Проверка maxmemory_policy
-    String policy = getFirstParam(params, "maxmemory_policy");
+    // Проверка max_memory_policy
+    String policy = getFirstParam(params, "max_memory_policy");
     if (!MaxMemoryPolicy.isValid(policy)) {
       result.addError(
-          "Invalid maxmemory_policy. Allowed: " + String.join(", ", MaxMemoryPolicy.getAllValues()));
+          "Invalid max_memory_policy. Allowed: " + String.join(", ", MaxMemoryPolicy.getAllValues()));
     }
 
-    // Проверка maxStorageMemory
-    String maxMemory = getFirstParam(params, "maxStorageMemory");
+    // Проверка max_storage_memory
+    String maxMemory = getFirstParam(params, "max_storage_memory");
     if (maxMemory != null) {
       try {
         long memoryValue = Long.parseLong(maxMemory);
         if (memoryValue <= 0) {
-          result.addError("maxStorageMemory must be a positive number");
+          result.addError("max_storage_memory must be a positive number");
         }
       } catch (NumberFormatException e) {
-        result.addError("maxStorageMemory must be a valid number");
+        result.addError("max_storage_memory must be a valid number");
       }
     }
+
+    // Проверка persistence
+    String persistence = getFirstParam(params, "persistence");
+    if (persistence != null) {
+      try {
+        boolean persistenceValue = Boolean.parseBoolean(persistence);
+      } catch (IllegalArgumentException e) {
+        result.addError("persistence must be true or false");
+      }
+    }
+
   }
 
   // Вспомогательные методы для извлечения параметров

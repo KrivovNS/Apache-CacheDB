@@ -366,12 +366,14 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   }
 
   private FullHttpResponse handleUpdateConfiguration(Map<String, String> params) {
-    String maxMemoryPolicyParam = params.get("maxmemory_policy");
-    String maxStorageMemoryParam = params.get("maxStorageMemory");
+    String maxMemoryPolicyParam = params.get("max_memory_policy");
+    String maxStorageMemoryParam = params.get("max_storage_memory");
+    String persistenceParam = params.get("persistence");
 
-    if (maxMemoryPolicyParam == null || maxStorageMemoryParam == null) {
+    // Проверяем обязательные параметры
+    if (maxMemoryPolicyParam == null || maxStorageMemoryParam == null || persistenceParam == null) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
-          "Missing required parameters: maxmemory_policy and maxStorageMemory");
+          "Missing required parameters: maxmemory_policy, max_storage_memory and persistence");
     }
 
     try {
@@ -379,7 +381,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       MaxMemoryPolicy maxMemoryPolicy = MaxMemoryPolicy.fromString(maxMemoryPolicyParam);
       if (maxMemoryPolicy == null) {
         return createResponse(HttpResponseStatus.BAD_REQUEST,
-            "Invalid maxmemory_policy. Valid values: " +
+            "Invalid max_memory_policy. Valid values: " +
                 String.join(", ", MaxMemoryPolicy.getAllValues()));
       }
 
@@ -389,15 +391,24 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         maxStorageMemory = Long.parseLong(maxStorageMemoryParam);
         if (maxStorageMemory <= 0) {
           return createResponse(HttpResponseStatus.BAD_REQUEST,
-              "maxStorageMemory must be positive");
+              "max_storage_memory must be positive");
         }
       } catch (NumberFormatException e) {
         return createResponse(HttpResponseStatus.BAD_REQUEST,
-            "Invalid maxStorageMemory format. Must be a number");
+            "Invalid max_storage_memory format. Must be a number");
+      }
+
+      // Парсим параметр persistence
+      boolean persistence;
+      try {
+        persistence = Boolean.parseBoolean(persistenceParam);
+      } catch (Exception e) {
+        return createResponse(HttpResponseStatus.BAD_REQUEST,
+            "Invalid persistence format. Must be 'true' or 'false'");
       }
 
       // Изменяем конфигурацию кэш-сервиса
-      CacheResult result = cacheService.changePolicy(maxMemoryPolicy, maxStorageMemory);
+      CacheResult result = cacheService.changePolicy(maxMemoryPolicy, maxStorageMemory, persistence);
 
       if (!result.isSuccess()) {
         return createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
@@ -406,7 +417,8 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       return createResponse(HttpResponseStatus.OK,
           "Configuration updated successfully\n" +
               "Max memory policy: " + maxMemoryPolicy.getValue() + "\n" +
-              "Max storage memory: " + maxStorageMemory + " bytes");
+              "Max storage memory: " + maxStorageMemory + " bytes\n" +
+              "Persistence: " + persistence);
 
     } catch (Exception e) {
       log.error("Error updating configuration", e);

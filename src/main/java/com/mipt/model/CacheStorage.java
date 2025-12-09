@@ -3,6 +3,7 @@ package com.mipt.model;
 import com.mipt.cache.*;
 import com.mipt.controller.DataTypeValidator;
 import java.util.concurrent.atomic.AtomicLong;
+import com.mipt.database.dao.CacheEntryDAO;
 
 public class CacheStorage {
 
@@ -11,8 +12,11 @@ public class CacheStorage {
   private final AtomicLong memoryUsed;
   private final long maxMemoryBytes;
   private final MaxMemoryPolicy maxMemoryPolicy;
+  private final boolean persistance;
+  private final CacheEntryDAO cacheEntryDAO;
 
-  public CacheStorage(long maxMemoryBytes, MaxMemoryPolicy maxMemoryPolicy) {
+  public CacheStorage(long maxMemoryBytes, MaxMemoryPolicy maxMemoryPolicy, boolean persistance,
+      CacheEntryDAO cacheEntryDAO) {
     this.maxMemoryBytes = maxMemoryBytes;
     this.memoryUsed = new AtomicLong(0);
     this.maxMemoryPolicy = maxMemoryPolicy;
@@ -24,6 +28,8 @@ public class CacheStorage {
     }
     this.mainCache = createCache(cacheType);
     this.ttlCache = createCache(cacheType);
+    this.persistance = persistance;
+    this.cacheEntryDAO = cacheEntryDAO;
   }
 
   private Cache createCache(CacheType type) {
@@ -77,7 +83,9 @@ public class CacheStorage {
             case ALLKEYSLRU -> {
               while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
                 Object keyToDelete = mainCache.freeMemory();
-                if (keyToDelete == null) break;
+                if (keyToDelete == null) {
+                  break;
+                }
 
                 CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
                 if (cacheEntry != null) {
@@ -98,7 +106,9 @@ public class CacheStorage {
                   keyToDelete = mainCache.freeMemory();
                 }
 
-                if (keyToDelete == null) break;
+                if (keyToDelete == null) {
+                  break;
+                }
 
                 CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
                 if (cacheEntry != null) {
@@ -126,6 +136,10 @@ public class CacheStorage {
 
         if (ttlSeconds != null && ttlSeconds > 0) {
           ttlCache.put(key, entry);
+        }
+
+        if (persistance) {
+          cacheEntryDAO.saveCacheEntry(key, entry);
         }
 
         return CacheResult.success("OK");
@@ -175,6 +189,9 @@ public class CacheStorage {
         mainCache.remove(key);
         ttlCache.remove(key);
         memoryUsed.addAndGet(-entry.getSizeInBytes());
+        if (persistance) {
+          cacheEntryDAO.deleteCacheEntry(key, entry.getDataType());
+        }
         return CacheResult.success("Deleted");
       }
       return CacheResult.error("Key not found");
