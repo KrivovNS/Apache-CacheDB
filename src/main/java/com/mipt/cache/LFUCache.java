@@ -54,9 +54,7 @@ public class LFUCache implements Cache {
     if (!frequencyList.containsKey(minFrequency)) return null;
     Iterator<Object> it = frequencyList.get(minFrequency).iterator();
     if (it.hasNext()) {
-      Object key = it.next();
-      remove(key);
-      return key;
+      return it.next();
     }
     return null;
   }

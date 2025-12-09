@@ -4,7 +4,8 @@ public enum MaxMemoryPolicy {
   NOEVICTION("noeviction"),
   ALLKEYSLRU("allkeys-lru"),
   VOLATILELRU("volatile-lru"),
-  ALLKEYSLFU("allkeys-lfu");
+  ALLKEYSLFU("allkeys-lfu"),
+  VOLATILELFU("volatile-lfu");
 
 
   private final String value;

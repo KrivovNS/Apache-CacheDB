@@ -5,6 +5,7 @@ import com.mipt.database.dao.*;
 import com.mipt.server.NettyHttpServer;
 import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
+import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
@@ -16,18 +17,31 @@ public class Main {
 
   public static void main(String[] args) {
     try {
-      // 1. Инициализируем базу данных
+      // 1. Загружаем порт из конфигурации
+      int port = 8080;
+      try {
+        Properties props = new Properties();
+        props.load(Main.class.getClassLoader()
+            .getResourceAsStream("application.properties"));
+        port = Integer.parseInt(props.getProperty("server.port", "8080"));
+      } catch (Exception e) {
+        log.warn("Could not read config, using default port 8080");
+      }
+
+      log.info("Server starting on port: {}", port);
+
+      // 2. Инициализируем базу данных
       log.info("Initializing database...");
       DatabaseInitializer.initializeDatabase();
 
-      // 2. Инициализируем DAO
+      // 3. Инициализируем DAO
       UserDAO userDAO = new UserDAO();
 
-      // 3. Инициализируем сервисы
+      // 4. Инициализируем сервисы
       CacheStorageService cacheService = new CacheStorageService();
       SessionService sessionService = new SessionService();
 
-      // 4. Запускаем очистку сессий каждую минуту
+      // 5. Запускаем очистку сессий каждую минуту
       Executors.newScheduledThreadPool(1)
           .scheduleAtFixedRate(() -> {
             int removedSessions = sessionService.cleanupExpiredSessions();
@@ -36,8 +50,7 @@ public class Main {
             }
           }, 1, 1, TimeUnit.MINUTES);
 
-      // 5. Запускаем Netty HTTP сервер
-      int port = 8080;
+      // 6. Запускаем Netty HTTP сервер
       NettyHttpServer server = new NettyHttpServer(
           port, cacheService, sessionService, userDAO);
 

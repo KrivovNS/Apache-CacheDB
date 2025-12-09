@@ -1,6 +1,7 @@
 package com.mipt.database.dao;
 
 import com.mipt.model.CacheEntry;
+import com.mipt.model.CacheStorage;
 import com.mipt.model.DataType;
 import com.mipt.database.initialization.DatabaseConnection;
 import com.mipt.service.CacheStorageService;
@@ -90,7 +91,7 @@ public class CacheEntryDAO {
   /**
    * Удаляет запись по ключу и типу данных
    */
-  public boolean deleteCacheEntry(String key, DataType dataType) throws SQLException {
+  public void deleteCacheEntry(String key, DataType dataType) throws SQLException {
     if (key == null || key.trim().isEmpty() || dataType == null) {
       throw new IllegalArgumentException("Key и dataType не могут быть null/пустыми");
     }
@@ -104,7 +105,6 @@ public class CacheEntryDAO {
       pstmt.setString(1, key);
       int rowsAffected = pstmt.executeUpdate();
 
-      return rowsAffected > 0;
     }
   }
 
@@ -112,40 +112,49 @@ public class CacheEntryDAO {
    * Метод для загрузки данных из БД в cacheStorage
    */
   public void loadEntriesIntoCacheStorage(CacheStorageService cacheService) throws SQLException {
-    for (DataType dataType : DataType.values()) {
-      String tableName = getTableName(dataType);
-      String sql = String.format("""
-          SELECT cache_key, data_value, size_bytes, 
-                 created_by_user, created_at, expires_at, access_count
-          FROM %s WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP
-          """, tableName);
+    try {
+      var databaseField = CacheStorageService.class.getDeclaredField("database");
+      databaseField.setAccessible(true);
+      CacheStorage database = (CacheStorage) databaseField.get(cacheService);
 
-      try (Connection conn = DatabaseConnection.getConnection();
-          Statement stmt = conn.createStatement();
-          ResultSet rs = stmt.executeQuery(sql)) {
+      for (DataType dataType : DataType.values()) {
+        String tableName = getTableName(dataType);
+        String sql = String.format("""
+                SELECT cache_key, data_value, size_bytes, 
+                       created_by_user, created_at, expires_at, access_count
+                FROM %s WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP
+                """, tableName);
 
-        Instant now = Instant.now();
+        try (Connection conn = DatabaseConnection.getConnection();
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(sql)) {
 
-        while (rs.next()) {
-          String key = rs.getString("cache_key");
-          Object data = extractDataValue(rs, dataType);
-          long sizeBytes = rs.getLong("size_bytes");
-          String createdByUser = rs.getString("created_by_user");
-          Instant createdAt = rs.getTimestamp("created_at").toInstant();
+          while (rs.next()) {
+            String key = rs.getString("cache_key");
+            Object data = extractDataValue(rs, dataType);
+            long sizeBytes = rs.getLong("size_bytes");
+            String createdByUser = rs.getString("created_by_user");
+            Instant createdAt = rs.getTimestamp("created_at").toInstant();
 
-          // Рассчитываем TTL
-          Long ttlSeconds = null;
-          Timestamp expiresAtTimestamp = rs.getTimestamp("expires_at");
-          if (expiresAtTimestamp != null && !rs.wasNull()) {
-            Instant expiresAt = expiresAtTimestamp.toInstant();
-            ttlSeconds = now.until(expiresAt, ChronoUnit.SECONDS);
-            if (ttlSeconds <= 0) continue;
+            // Рассчитываем TTL
+            Long ttlSeconds = null;
+            Timestamp expiresAtTimestamp = rs.getTimestamp("expires_at");
+            if (expiresAtTimestamp != null && !rs.wasNull()) {
+              Instant expiresAt = expiresAtTimestamp.toInstant();
+              // Рассчитываем исходный TTL
+              ttlSeconds = ChronoUnit.SECONDS.between(createdAt, expiresAt);
+            }
+
+            // Создаем CacheEntry
+            CacheEntry entry = new CacheEntry(dataType, data, sizeBytes, createdByUser, ttlSeconds);
+
+            // Восстанавливаем запись
+            database.restoreEntry(key, entry);
           }
-
-          // Добавляем в кэш
-          cacheService.post(key, data, dataType, createdByUser, ttlSeconds, sizeBytes);
         }
       }
+    } catch (Exception e) {
+      throw new SQLException("Ошибка загрузки данных в кэш: " + e.getMessage(), e);
     }
   }
 
