@@ -83,7 +83,7 @@ public class CacheStorage {
             case NOEVICTION -> {
               return CacheResult.error("Memory overflow");
             }
-            case ALLKEYSLRU -> {
+            case ALLKEYSLRU, ALLKEYSLFU -> {
               while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
                 Object keyToDelete = mainCache.freeMemory();
                 if (keyToDelete == null) {
@@ -93,14 +93,11 @@ public class CacheStorage {
                 CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
                 if (cacheEntry != null) {
                   memoryUsed.addAndGet(-cacheEntry.getSizeInBytes());
-                  if (cacheEntry.dataWithTtl()) {
-                    ttlCache.remove(keyToDelete);
-                  }
-                  mainCache.remove(keyToDelete);
+                  this.delete((String) keyToDelete);
                 }
               }
             }
-            case VOLATILELRU -> {
+            case VOLATILELRU, VOLATILELFU -> {
               while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
                 Object keyToDelete;
                 if (ttlCache.size() > 0) {
@@ -116,10 +113,7 @@ public class CacheStorage {
                 CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
                 if (cacheEntry != null) {
                   memoryUsed.addAndGet(-cacheEntry.getSizeInBytes());
-                  if (cacheEntry.dataWithTtl()) {
-                    ttlCache.remove(keyToDelete);
-                  }
-                  mainCache.remove(keyToDelete);
+                  this.delete((String) keyToDelete);
                 }
               }
             }
@@ -203,6 +197,14 @@ public class CacheStorage {
     }
   }
 
+  public void restoreEntry(String key, CacheEntry entry) {
+    mainCache.put(key, entry);
+    memoryUsed.addAndGet(entry.getSizeInBytes());
+    if (entry.isExpired()) {
+      ttlCache.put(key, entry);
+    }
+  }
+
   public boolean containsKey(String key) {
     return mainCache.containsKey(key);
   }
@@ -219,18 +221,5 @@ public class CacheStorage {
       }
     }
     return removed;
-  }
-
-  public long getMemoryUsed() {
-    return memoryUsed.get();
-  }
-
-  public long getMaxMemory() {
-    return maxMemoryBytes;
-  }
-
-  public DataType getDataType(String key) {
-    CacheEntry entry = (CacheEntry) mainCache.get(key);
-    return entry != null ? entry.getDataType() : null;
   }
 }
