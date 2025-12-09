@@ -14,6 +14,7 @@ Apache CacheDB - это СУБД класса NoSQL, сохраняющая да
 1. Загрузите образ проекта с помощью команды 
 
 `docker pull dimonishe12345/apache-cachedb:1.0`
+
 2. Запустите контейнер с помощью команды 
 
 `docker run -it --rm -p <Порт>:7070 -v ${PWD}/data:/app/data dimonishe12345/apache-cachedb:1.0`
