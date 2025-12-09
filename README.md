@@ -24,7 +24,7 @@ Apache CacheDB - это СУБД класса NoSQL, сохраняющая да
 Все готово к использованию нашего сервиса!
 ### Быстрый старт
 
-По умолчанию сервер запускается на порту 7070.
+В примерах показаны запросы к контейнеру с портом 7070.
 При инициализации автоматически создается пользователь `default` с паролем `admin123` и правами
 `superadmin`. 
 
@@ -32,12 +32,12 @@ Apache CacheDB - это СУБД класса NoSQL, сохраняющая да
 
 Пользователь `deafult` обладает правами на все команды. Чтобы сделать сменить пароль, выполните запрос:
 
-GET http://localhost:8080/auth?login=default&password=admin123 
+GET http://localhost:7070/auth?login=default&password=admin123 
 
 в ответе от сервера вы получите токен сессии.
 Используйте данный токен в запросе:
 
-PUT http://localhost:8080/user?session_token={полученый_токен}login=default&password={новый_пароль}.
+PUT http://localhost:7070/user?session_token={полученый_токен}login=default&password={новый_пароль}.
 
 Поздравляю, Вы изменили пароль default пользователя! Пересоздайте сессию `default` юзера и теперь вы
 можете пользоваться всеми возможностями Apache CacheDB!
@@ -48,7 +48,7 @@ PUT http://localhost:8080/user?session_token={полученый_токен}logi
 
 - Метод
 - URI: в формате {host}/{req_type}?{parameters}
-    - `host` по умолчанию `localhost:7070`
+    - `host` - пример: `localhost:7070`
     - `req_type` - один из пяти видов запросов
     - `parameters` - параметры в формате {parameter_name}={value} разделенные `&`
 - Тело запроса(нужно лишь для методов POST PUT при обращении кэшу)
