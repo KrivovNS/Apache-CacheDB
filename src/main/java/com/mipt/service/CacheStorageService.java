@@ -1,11 +1,13 @@
 package com.mipt.service;
 
 import com.mipt.cache.CacheResult;
+import com.mipt.database.dao.CacheEntryDAO;
 import com.mipt.model.DataType;
 import com.mipt.model.CacheStorage;
 import com.mipt.model.MaxMemoryPolicy;
 import java.io.IOException;
 import java.io.InputStream;
+import java.sql.SQLException;
 import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -19,6 +21,8 @@ public class CacheStorageService {
   private long maxMemory;
   private MaxMemoryPolicy maxMemoryPolicy;
   private boolean canPolicyBeChanged;
+  private boolean persistence;
+  private final CacheEntryDAO cacheEntryDAO;
 
   public CacheStorageService() {
     try {
@@ -27,20 +31,47 @@ public class CacheStorageService {
       this.maxMemoryPolicy = parsePolicy(props, "cache.max.memory.policy",
           MaxMemoryPolicy.ALLKEYSLRU);
       this.canPolicyBeChanged = true;
+      this.persistence = Boolean.parseBoolean(props.getProperty("cache.persistence", "false"));
 
     } catch (IOException e) {
       this.maxMemory = 100 * 1024 * 1024;
       this.maxMemoryPolicy = MaxMemoryPolicy.ALLKEYSLRU;
       this.canPolicyBeChanged = true;
+      this.persistence = false;
     }
 
+    cacheEntryDAO = new CacheEntryDAO();
+
     createCacheStorages();
+
+    // Загружаем данные из БД если persistence включен
+    if (persistence) {
+      loadFromDatabase();
+    }
 
     this.cleanupScheduler = Executors.newSingleThreadScheduledExecutor();
     this.cleanupScheduler.scheduleAtFixedRate(
         this::cleanupDatabase,
         1, 1, TimeUnit.MINUTES
     );
+  }
+
+  /**
+   * Загружает данные из базы данных в кэш
+   */
+  public void loadFromDatabase() {
+    try {
+      // Создаем таблицы если их нет
+      cacheEntryDAO.createAllTables();
+      // Загружаем данные из БД в кэш
+      cacheEntryDAO.loadEntriesIntoCacheStorage(this);
+
+      System.out.println("Данные успешно загружены из базы данных");
+
+    } catch (SQLException e) {
+      System.err.println("Ошибка при загрузке данных из БД: " + e.getMessage());
+      e.printStackTrace();
+    }
   }
 
   // Основные операции
@@ -88,11 +119,15 @@ public class CacheStorageService {
     }
   }
 
-  public CacheResult changePolicy(MaxMemoryPolicy maxMemoryPolicy, long totalMaxMemory) {
+  public CacheResult changePolicy(MaxMemoryPolicy maxMemoryPolicy, long totalMaxMemory, boolean persistence) {
     if (canPolicyBeChanged) {
       this.maxMemoryPolicy = maxMemoryPolicy;
       this.maxMemory = totalMaxMemory;
+      this.persistence = persistence;
       createCacheStorages();
+      if (persistence) {
+        loadFromDatabase();
+      }
       return CacheResult.success();
     }
     return CacheResult.error("Can't change configuration");
@@ -115,17 +150,13 @@ public class CacheStorageService {
       try {
         return MaxMemoryPolicy.valueOf(value.toUpperCase());
       } catch (IllegalArgumentException e) {
-        // Оставляем defaultValue
+        return MaxMemoryPolicy.ALLKEYSLRU;
       }
     }
     return defaultValue;
   }
 
   private void createCacheStorages() {
-    database = new CacheStorage(maxMemory, maxMemoryPolicy);
-  }
-
-  public long getmaxMemory() {
-    return maxMemory;
+    database = new CacheStorage(maxMemory, maxMemoryPolicy, persistence, cacheEntryDAO);
   }
 }

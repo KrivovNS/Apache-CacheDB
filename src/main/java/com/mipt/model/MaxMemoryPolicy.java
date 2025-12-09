@@ -3,7 +3,9 @@ package com.mipt.model;
 public enum MaxMemoryPolicy {
   NOEVICTION("noeviction"),
   ALLKEYSLRU("allkeys-lru"),
-  VOLATILELRU("volatile-lru");
+  VOLATILELRU("volatile-lru"),
+  ALLKEYSLFU("allkeys-lfu"),
+  VOLATILELFU("volatile-lfu");
 
 
   private final String value;

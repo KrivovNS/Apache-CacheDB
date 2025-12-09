@@ -1,7 +1,9 @@
 package com.mipt.model;
 
 import com.mipt.cache.*;
+import com.mipt.controller.DataTypeValidator;
 import java.util.concurrent.atomic.AtomicLong;
+import com.mipt.database.dao.CacheEntryDAO;
 
 public class CacheStorage {
 
@@ -10,9 +12,11 @@ public class CacheStorage {
   private final AtomicLong memoryUsed;
   private final long maxMemoryBytes;
   private final MaxMemoryPolicy maxMemoryPolicy;
+  private final boolean persistance;
+  private final CacheEntryDAO cacheEntryDAO;
 
-  // Конструктор
-  public CacheStorage(long maxMemoryBytes, MaxMemoryPolicy maxMemoryPolicy) {
+  public CacheStorage(long maxMemoryBytes, MaxMemoryPolicy maxMemoryPolicy, boolean persistance,
+      CacheEntryDAO cacheEntryDAO) {
     this.maxMemoryBytes = maxMemoryBytes;
     this.memoryUsed = new AtomicLong(0);
     this.maxMemoryPolicy = maxMemoryPolicy;
@@ -20,78 +24,125 @@ public class CacheStorage {
     switch (maxMemoryPolicy) {
       case NOEVICTION -> cacheType = CacheType.SIMPLE;
       case ALLKEYSLRU, VOLATILELRU -> cacheType = CacheType.LRU;
+      case ALLKEYSLFU -> cacheType = CacheType.LFU;
       default -> cacheType = CacheType.LRU;
     }
     this.mainCache = createCache(cacheType);
     this.ttlCache = createCache(cacheType);
+    this.persistance = persistance;
+    this.cacheEntryDAO = cacheEntryDAO;
   }
 
   private Cache createCache(CacheType type) {
-    return (type == CacheType.LRU)
-        ? new LRUCache()
-        : new SimpleCache();
+    return switch (type) {
+      case LRU -> new LRUCache();
+      case SIMPLE -> new SimpleCache();
+      case LFU -> new LFUCache();
+    };
   }
 
   // Основные операции
   public CacheResult set(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes) {
-    if (sizeBytes > maxMemoryBytes) {
-      return CacheResult.error("Data exceeding the memory limit");
-    }
 
     try {
-      // Проверяем доступность памяти
-      if (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
-        switch (maxMemoryPolicy) {
-          case NOEVICTION -> {
-            return CacheResult.error("Memory overflow");
-          }
-          case ALLKEYSLRU -> {
-            while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
-              Object keyToDelete = mainCache.freeMemory();
-              CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
-              memoryUsed.addAndGet(-(cacheEntry.getSizeInBytes()));
-              if (cacheEntry.dataWithTtl()) {
-                ttlCache.remove(keyToDelete);
+      String dataString;
+      if (value == null) {
+        return CacheResult.error("Value cannot be null");
+      } else if (value instanceof String) {
+        dataString = (String) value;
+      } else if (value instanceof byte[]) {
+        // Для байтового массива преобразуем в Base64 для валидации
+        dataString = java.util.Base64.getEncoder().encodeToString((byte[]) value);
+      } else {
+        dataString = value.toString();
+      }
+
+      if (!DataTypeValidator.validateDataByType(dataString, dataType.getValue())) {
+        return CacheResult.error("Invalid data format for type: " + dataType);
+      }
+
+      // Преобразование данных для хранения
+      Object processedValue;
+      try {
+        processedValue = DataTypeValidator.processDataForStorage(
+            dataString,
+            dataType.getValue()
+        );
+      } catch (IllegalArgumentException e) {
+        return CacheResult.error("Data processing error: " + e.getMessage());
+      }
+
+      if (sizeBytes > maxMemoryBytes) {
+        return CacheResult.error("Data exceeding the memory limit");
+      }
+
+      try {
+        if (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+          switch (maxMemoryPolicy) {
+            case NOEVICTION -> {
+              return CacheResult.error("Memory overflow");
+            }
+            case ALLKEYSLRU, ALLKEYSLFU -> {
+              while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+                Object keyToDelete = mainCache.freeMemory();
+                if (keyToDelete == null) {
+                  break;
+                }
+
+                CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
+                if (cacheEntry != null) {
+                  memoryUsed.addAndGet(-cacheEntry.getSizeInBytes());
+                  this.delete((String) keyToDelete);
+                }
               }
-              mainCache.remove(keyToDelete);
+            }
+            case VOLATILELRU, VOLATILELFU -> {
+              while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+                Object keyToDelete;
+                if (ttlCache.size() > 0) {
+                  keyToDelete = ttlCache.freeMemory();
+                } else {
+                  keyToDelete = mainCache.freeMemory();
+                }
+
+                if (keyToDelete == null) {
+                  break;
+                }
+
+                CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
+                if (cacheEntry != null) {
+                  memoryUsed.addAndGet(-cacheEntry.getSizeInBytes());
+                  this.delete((String) keyToDelete);
+                }
+              }
             }
           }
-          case VOLATILELRU -> {
-            while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
-              Object keyToDelete;
-              if (ttlCache.size() > 0) {
-                keyToDelete = ttlCache.freeMemory();
-              } else {
-                keyToDelete = mainCache.freeMemory();
-              }
-              CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
-              memoryUsed.addAndGet(-(cacheEntry.getSizeInBytes()));
-              if (cacheEntry.dataWithTtl()) {
-                ttlCache.remove(keyToDelete);
-              }
-              ;
-              mainCache.remove(keyToDelete);
-            }
+
+          if (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+            return CacheResult.error("Not enough memory even after eviction");
           }
         }
+
+        CacheEntry entry = new CacheEntry(
+            dataType, processedValue, sizeBytes, user, ttlSeconds
+        );
+
+        mainCache.put(key, entry);
+        memoryUsed.addAndGet(sizeBytes);
+
+        if (ttlSeconds != null && ttlSeconds > 0) {
+          ttlCache.put(key, entry);
+        }
+
+        if (persistance) {
+          cacheEntryDAO.saveCacheEntry(key, entry);
+        }
+
+        return CacheResult.success("OK");
+      } catch (Exception e) {
+        return CacheResult.error("SET error: " + e.getMessage());
       }
-
-      // Создаем CacheEntry
-      CacheEntry entry = new CacheEntry(
-          dataType, value, sizeBytes, user, ttlSeconds
-      );
-
-      // Сохраняем в основной кэш
-      mainCache.put(key, entry);
-      memoryUsed.addAndGet(sizeBytes);
-
-      // Если есть TTL, сохраняем в TTL кэш
-      if (ttlSeconds != null && ttlSeconds > 0) {
-        ttlCache.put(key, entry);
-      }
-
-      return CacheResult.success("OK");
     } catch (Exception e) {
       return CacheResult.error("SET error: " + e.getMessage());
     }
@@ -99,24 +150,30 @@ public class CacheStorage {
 
   public CacheResult get(String key) {
     try {
-      // Проверяем наличие в TTL кэше (быстрая проверка)
       CacheEntry ttlEntry = (CacheEntry) ttlCache.get(key);
       if (ttlEntry != null && ttlEntry.isExpired()) {
-        // Удаляем просроченный ключ
         delete(key);
         return CacheResult.error("Key expired");
       }
 
-      // Получаем из основного кэша
       CacheEntry entry = (CacheEntry) mainCache.get(key);
       if (entry == null) {
         return CacheResult.error("Key not found");
       }
 
-      // Обновляем статистику
       entry.incrementAccessCount();
 
-      return CacheResult.success(entry.getData());
+      String formattedData;
+      try {
+        formattedData = DataTypeValidator.formatDataForResponse(
+            entry.getData(),
+            entry.getDataType().getValue()
+        );
+      } catch (IllegalArgumentException e) {
+        return CacheResult.error("Data formatting error: " + e.getMessage());
+      }
+
+      return CacheResult.success(formattedData);
     } catch (Exception e) {
       return CacheResult.error("GET error: " + e.getMessage());
     }
@@ -129,11 +186,22 @@ public class CacheStorage {
         mainCache.remove(key);
         ttlCache.remove(key);
         memoryUsed.addAndGet(-entry.getSizeInBytes());
+        if (persistance) {
+          cacheEntryDAO.deleteCacheEntry(key, entry.getDataType());
+        }
         return CacheResult.success("Deleted");
       }
       return CacheResult.error("Key not found");
     } catch (Exception e) {
       return CacheResult.error("DEL error: " + e.getMessage());
+    }
+  }
+
+  public void restoreEntry(String key, CacheEntry entry) {
+    mainCache.put(key, entry);
+    memoryUsed.addAndGet(entry.getSizeInBytes());
+    if (entry.isExpired()) {
+      ttlCache.put(key, entry);
     }
   }
 
@@ -153,14 +221,5 @@ public class CacheStorage {
       }
     }
     return removed;
-  }
-
-  // Геттеры
-  public long getMemoryUsed() {
-    return memoryUsed.get();
-  }
-
-  public long getMaxMemory() {
-    return maxMemoryBytes;
   }
 }
