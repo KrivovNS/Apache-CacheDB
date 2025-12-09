@@ -21,6 +21,7 @@ public class CacheStorage {
     switch (maxMemoryPolicy) {
       case NOEVICTION -> cacheType = CacheType.SIMPLE;
       case ALLKEYSLRU, VOLATILELRU -> cacheType = CacheType.LRU;
+      case ALLKEYSLFU -> cacheType = CacheType.LFU;
       default -> cacheType = CacheType.LRU;
     }
     this.mainCache = createCache(cacheType);
@@ -28,9 +29,11 @@ public class CacheStorage {
   }
 
   private Cache createCache(CacheType type) {
-    return (type == CacheType.LRU)
-        ? new LRUCache()
-        : new SimpleCache();
+    return switch (type) {
+      case LRU -> new LRUCache();
+      case SIMPLE -> new SimpleCache();
+      case LFU -> new LFUCache();
+    };
   }
 
   // Основные операции с валидацией данных
