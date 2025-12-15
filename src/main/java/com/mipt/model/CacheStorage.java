@@ -4,6 +4,7 @@ import com.mipt.cache.*;
 import com.mipt.controller.DataTypeValidator;
 import java.util.concurrent.atomic.AtomicLong;
 import com.mipt.database.dao.CacheEntryDAO;
+import com.mipt.controller.MemoryCalculator;
 
 public class CacheStorage {
 
@@ -43,7 +44,7 @@ public class CacheStorage {
 
   // Основные операции
   public CacheResult set(String key, Object value, DataType dataType,
-      String user, Long ttlSeconds, long sizeBytes) {
+      String user, Long ttlSeconds) {
 
     try {
       String dataString;
@@ -73,18 +74,22 @@ public class CacheStorage {
         return CacheResult.error("Data processing error: " + e.getMessage());
       }
 
-      if (sizeBytes > maxMemoryBytes) {
-        return CacheResult.error("Data exceeding the memory limit");
-      }
+      // Создаём временный CacheEntry, чтобы посчитать полный размер (данные + мета)
+            CacheEntry tempEntry = new CacheEntry(dataType, processedValue, 0, user, ttlSeconds);
+            long totalSizeBytes = MemoryCalculator.calculateEntrySize(tempEntry);
+
+                if (totalSizeBytes > maxMemoryBytes) {
+                return CacheResult.error("Data exceeding the memory limit");
+              }
 
       try {
-        if (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+        if (memoryUsed.get() + totalSizeBytes > maxMemoryBytes) {
           switch (maxMemoryPolicy) {
             case NOEVICTION -> {
               return CacheResult.error("Memory overflow");
             }
             case ALLKEYSLRU, ALLKEYSLFU -> {
-              while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+              while (memoryUsed.get() + totalSizeBytes > maxMemoryBytes) {
                 Object keyToDelete = mainCache.freeMemory();
                 if (keyToDelete == null) {
                   break;
@@ -92,13 +97,13 @@ public class CacheStorage {
 
                 CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
                 if (cacheEntry != null) {
-                  memoryUsed.addAndGet(-cacheEntry.getSizeInBytes());
+                  memoryUsed.addAndGet(-cacheEntry.getTotalSizeInBytes());
                   this.delete((String) keyToDelete);
                 }
               }
             }
             case VOLATILELRU, VOLATILELFU -> {
-              while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+              while (memoryUsed.get() + totalSizeBytes > maxMemoryBytes) {
                 Object keyToDelete;
                 if (ttlCache.size() > 0) {
                   keyToDelete = ttlCache.freeMemory();
@@ -112,24 +117,24 @@ public class CacheStorage {
 
                 CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
                 if (cacheEntry != null) {
-                  memoryUsed.addAndGet(-cacheEntry.getSizeInBytes());
+                  memoryUsed.addAndGet(-cacheEntry.getTotalSizeInBytes());
                   this.delete((String) keyToDelete);
                 }
               }
             }
           }
 
-          if (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+          if (memoryUsed.get() + totalSizeBytes > maxMemoryBytes) {
             return CacheResult.error("Not enough memory even after eviction");
           }
         }
 
         CacheEntry entry = new CacheEntry(
-            dataType, processedValue, sizeBytes, user, ttlSeconds
+            dataType, processedValue, totalSizeBytes, user, ttlSeconds
         );
 
         mainCache.put(key, entry);
-        memoryUsed.addAndGet(sizeBytes);
+        memoryUsed.addAndGet(entry.getTotalSizeInBytes());
 
         if (ttlSeconds != null && ttlSeconds > 0) {
           ttlCache.put(key, entry);
@@ -185,7 +190,7 @@ public class CacheStorage {
       if (entry != null) {
         mainCache.remove(key);
         ttlCache.remove(key);
-        memoryUsed.addAndGet(-entry.getSizeInBytes());
+        memoryUsed.addAndGet(-entry.getTotalSizeInBytes());
         if (persistance) {
           cacheEntryDAO.deleteCacheEntry(key, entry.getDataType());
         }
@@ -198,8 +203,7 @@ public class CacheStorage {
   }
 
   public void restoreEntry(String key, CacheEntry entry) {
-    mainCache.put(key, entry);
-    memoryUsed.addAndGet(entry.getSizeInBytes());
+    mainCache.put(key, entry);memoryUsed.addAndGet(entry.getTotalSizeInBytes());memoryUsed.addAndGet(entry.getSizeInBytes());
     if (entry.isExpired()) {
       ttlCache.put(key, entry);
     }

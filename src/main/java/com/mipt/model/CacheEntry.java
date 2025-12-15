@@ -75,6 +75,20 @@ public class CacheEntry {
     this.expiresAt = expiresAt;
   }
 
+// --- Новые методы для учёта метаинформации ---
+  public long getMetadataSizeInBytes() {
+        long size = 0;
+        if (createdByUser != null) size += createdByUser.getBytes().length;
+        if (dataType != null) size += dataType.getValue().getBytes().length;
+        if (expiresAt != null) size += Long.BYTES;
+        size += Long.BYTES;    // createdAt timestamp
+        size += Integer.BYTES; // accessCount
+        return size;
+      }
+  public long getTotalSizeInBytes() {
+        return sizeInBytes + getMetadataSizeInBytes();
+  }
+
   @Override
   public String toString() {
     return "CacheEntry{" +

@@ -1,5 +1,6 @@
 package com.mipt.controller;
 
+import com.mipt.model.CacheEntry;
 import com.mipt.model.DataType;
 import java.util.Base64;
 
@@ -30,4 +31,13 @@ public class MemoryCalculator {
   public static long calculateBits(DataType type, String data) {
     return calculateBytes(type, data) * 8;
   }
+  /**
+   * Возвращает полный размер записи (данные + метаинформация).
+   * @param entry объект CacheEntry
+   * @return количество байт
+   */
+   public static long calculateEntrySize(CacheEntry entry) {
+        if (entry == null) return 0;
+        return entry.getTotalSizeInBytes();
+   }
 }
