@@ -81,7 +81,7 @@ public class CacheStorageService {
       canPolicyBeChanged = false;
     }
     if (!database.containsKey(key)) {
-      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes);
+      return database.set(key, value, dataType, user, ttlSeconds);
     }
     return CacheResult.error("The key already exists");
   }
@@ -89,7 +89,7 @@ public class CacheStorageService {
   public CacheResult put(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes) {
     if (database.containsKey(key)) {
-      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes);
+      return database.set(key, value, dataType, user, ttlSeconds);
     }
     return CacheResult.error("The key not exists");
   }
