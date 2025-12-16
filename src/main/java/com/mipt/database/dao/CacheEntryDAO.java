@@ -59,9 +59,9 @@ public class CacheEntryDAO {
     // Для H2 используем MERGE вместо ON DUPLICATE KEY UPDATE
     String sql = String.format("""
         MERGE INTO %s (cache_key, data_value, size_bytes, 
-                      created_by_user, created_at, expires_at, access_count)
+                      created_by_user, created_at, expires_at)
         KEY(cache_key)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         """, tableName);
 
     try (Connection conn = DatabaseConnection.getConnection();
@@ -81,8 +81,6 @@ public class CacheEntryDAO {
       } else {
         pstmt.setNull(6, Types.TIMESTAMP);
       }
-
-      pstmt.setInt(7, entry.getAccessCount());
 
       pstmt.executeUpdate();
     }
@@ -121,7 +119,7 @@ public class CacheEntryDAO {
         String tableName = getTableName(dataType);
         String sql = String.format("""
                 SELECT cache_key, data_value, size_bytes, 
-                       created_by_user, created_at, expires_at, access_count
+                           created_by_user, created_at, expires_at
                 FROM %s WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP
                 """, tableName);
 
