@@ -43,8 +43,8 @@ public class CacheStorage {
 
   // Основные операции
   public CacheResult set(String key, Object value, DataType dataType,
-      String user, Long ttlSeconds, long sizeBytes) {
-
+      String user, Long ttlSeconds, long sizeBytes, HttpMethod httpMethod) {
+    boolean isUpdate = httpMethod == HttpMethod.PUT;
     try {
       String dataString;
       if (value == null) {
@@ -78,13 +78,23 @@ public class CacheStorage {
       }
 
       try {
-        if (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+        CacheEntry existingEntry = (CacheEntry) mainCache.get(key);
+        long existingSize = 0;
+
+        if (existingEntry != null && isUpdate) {
+          existingSize = existingEntry.getSizeInBytes();
+        }
+        long netSizeChange = isUpdate ?
+            sizeBytes - existingSize :
+            sizeBytes;
+
+        if (memoryUsed.get() + netSizeChange > maxMemoryBytes) {
           switch (maxMemoryPolicy) {
             case NOEVICTION -> {
               return CacheResult.error("Memory overflow");
             }
             case ALLKEYSLRU, ALLKEYSLFU -> {
-              while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+              while (memoryUsed.get() + netSizeChange > maxMemoryBytes) {
                 Object keyToDelete = mainCache.freeMemory();
                 if (keyToDelete == null) {
                   break;
@@ -92,13 +102,12 @@ public class CacheStorage {
 
                 CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
                 if (cacheEntry != null) {
-                  memoryUsed.addAndGet(-cacheEntry.getSizeInBytes());
                   this.delete((String) keyToDelete);
                 }
               }
             }
             case VOLATILELRU, VOLATILELFU -> {
-              while (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+              while (memoryUsed.get() + netSizeChange > maxMemoryBytes) {
                 Object keyToDelete;
                 if (ttlCache.size() > 0) {
                   keyToDelete = ttlCache.freeMemory();
@@ -119,8 +128,15 @@ public class CacheStorage {
             }
           }
 
-          if (memoryUsed.get() + sizeBytes > maxMemoryBytes) {
+          if (memoryUsed.get() + netSizeChange > maxMemoryBytes) {
             return CacheResult.error("Not enough memory even after eviction");
+          }
+        }
+        if (isUpdate && existingEntry != null) {
+          memoryUsed.addAndGet(-existingEntry.getSizeInBytes());
+
+          if (existingEntry.getExpiresAt() != null) {
+            ttlCache.remove(key);
           }
         }
 
@@ -160,8 +176,6 @@ public class CacheStorage {
       if (entry == null) {
         return CacheResult.error("Key not found");
       }
-
-      entry.incrementAccessCount();
 
       String formattedData;
       try {
