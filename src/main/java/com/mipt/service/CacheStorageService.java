@@ -4,6 +4,7 @@ import com.mipt.cache.CacheResult;
 import com.mipt.database.dao.CacheEntryDAO;
 import com.mipt.model.DataType;
 import com.mipt.model.CacheStorage;
+import com.mipt.model.HttpMethod;
 import com.mipt.model.MaxMemoryPolicy;
 import java.io.IOException;
 import java.io.InputStream;
@@ -81,7 +82,7 @@ public class CacheStorageService {
       canPolicyBeChanged = false;
     }
     if (!database.containsKey(key)) {
-      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes);
+      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes, HttpMethod.POST);
     }
     return CacheResult.error("The key already exists");
   }
@@ -89,7 +90,7 @@ public class CacheStorageService {
   public CacheResult put(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes) {
     if (database.containsKey(key)) {
-      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes);
+      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes,HttpMethod.PUT);
     }
     return CacheResult.error("The key not exists");
   }
