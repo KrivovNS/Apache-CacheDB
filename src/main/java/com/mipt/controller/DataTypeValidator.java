@@ -92,8 +92,8 @@ public class DataTypeValidator {
 
 
   /**
-   * Проверяет, что строка является валидным представлением массива байтов.
-   * Принимает либо Base64, либо hex строку
+   * Проверяет, что строка является валидным представлением массива байтов. Принимает либо Base64,
+   * либо hex строку
    */
   public static boolean isValidByteArray(String data) {
     if (data == null || data.trim().isEmpty()) {
@@ -156,17 +156,15 @@ public class DataTypeValidator {
         try {
           String trimmed = data.trim();
           try {
-            return java.util.Base64.getDecoder().decode(trimmed);
-          } catch (IllegalArgumentException e1) {
             if (isValidHexString(trimmed)) {
               String hexValue = trimmed.startsWith("0x") || trimmed.startsWith("0X")
                   ? trimmed.substring(2)
                   : trimmed;
               return hexStringToByteArray(hexValue);
-            } else {
-              throw new IllegalArgumentException(
-                  "Invalid byte data. Expected Base64 or hex string");
             }
+            throw new IllegalArgumentException();
+          } catch (IllegalArgumentException e1) {
+            return java.util.Base64.getDecoder().decode(trimmed);
           }
         } catch (IllegalArgumentException e) {
           throw new IllegalArgumentException("Invalid byte data: " + e.getMessage());

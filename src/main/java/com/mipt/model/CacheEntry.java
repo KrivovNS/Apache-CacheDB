@@ -11,7 +11,6 @@ public class CacheEntry {
   private final String createdByUser;
   private final Instant createdAt;
   private Instant expiresAt; // null если нет TTL
-  private int accessCount;
 
   public CacheEntry(DataType dataType, Object data, long sizeInBytes,
       String createdByUser, Long ttlSeconds) {
@@ -20,8 +19,6 @@ public class CacheEntry {
     this.sizeInBytes = sizeInBytes;
     this.createdByUser = Objects.requireNonNull(createdByUser);
     this.createdAt = Instant.now();
-    this.accessCount = 0;
-
     if (ttlSeconds != null && ttlSeconds > 0) {
       this.expiresAt = createdAt.plusSeconds(ttlSeconds);
     }
@@ -36,10 +33,6 @@ public class CacheEntry {
       return false;
     }
     return Instant.now().isAfter(expiresAt);
-  }
-
-  public void incrementAccessCount() {
-    accessCount++;
   }
 
   // Геттеры
@@ -67,9 +60,6 @@ public class CacheEntry {
     return expiresAt;
   }
 
-  public int getAccessCount() {
-    return accessCount;
-  }
 
   public void setExpiresAt(Instant expiresAt) {
     this.expiresAt = expiresAt;
@@ -81,7 +71,6 @@ public class CacheEntry {
         "dataType=" + dataType +
         ", size=" + sizeInBytes + " bytes" +
         ", user='" + createdByUser + '\'' +
-        ", accessCount=" + accessCount +
         ", expiresAt=" + (expiresAt != null ? expiresAt : "never") +
         '}';
   }
