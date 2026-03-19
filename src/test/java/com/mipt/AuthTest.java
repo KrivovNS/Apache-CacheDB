@@ -2,6 +2,8 @@
 
 import com.mipt.controller.NettyHandler;
 import com.mipt.database.dao.UserDAO;
+import com.mipt.database.initialization.DatabaseConnection;
+import com.mipt.database.initialization.DatabaseInitializer;
 import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
 import io.netty.buffer.Unpooled;
@@ -12,7 +14,28 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+ @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AuthTest {
+
+   @BeforeAll
+   void setupTestDatabase() throws Exception {
+     System.out.println("=== Setting up test database for AuthTest ===");
+
+     try {
+       Class.forName("org.h2.Driver");
+     } catch (ClassNotFoundException e) {
+       fail("H2 driver not found");
+     }
+
+     // Используем in-memory базу для тестов
+     System.setProperty("db.url", "jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1");
+     DatabaseInitializer.initializeDatabase();
+   }
+
+   @AfterAll
+   void cleanupDatabase() {
+     DatabaseConnection.closeConnection();
+   }
 
   @Test
   void testSuccessfulAuthentication() {

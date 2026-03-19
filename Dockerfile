@@ -25,9 +25,10 @@ COPY src/main/resources ./resources
 
 # Создаём папку для H2 базы (соответствует db.url=jdbc:h2:file:./data/storagedb)
 RUN mkdir -p /app/data
+VOLUME /app/data
 
 # Открываем порт приложения
 EXPOSE 8080
-
+EXPOSE 9090
 # Запуск приложения
 ENTRYPOINT ["java", "-jar", "app.jar"]

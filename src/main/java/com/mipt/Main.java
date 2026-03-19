@@ -3,6 +3,7 @@ package com.mipt;
 import com.mipt.database.initialization.DatabaseInitializer;
 import com.mipt.database.dao.*;
 import com.mipt.server.NettyHttpServer;
+import com.mipt.server.NettyTcpServer;
 import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
 import java.util.Properties;
@@ -50,7 +51,17 @@ public class Main {
             }
           }, 1, 1, TimeUnit.MINUTES);
 
-      // 6. Запускаем Netty HTTP сервер
+      // 6. Запускаем TCP-сервер в отдельном потоке (порт 9090)
+      NettyTcpServer tcpServer = new NettyTcpServer(9090, cacheService, sessionService, userDAO);
+      new Thread(() -> {
+        try {
+          tcpServer.run();
+        } catch (Exception e) {
+          log.error("TCP server error", e);
+        }
+      }, "tcp-server").start();
+
+      // 7. Запускаем Netty HTTP сервер (порт 8080)
       NettyHttpServer server = new NettyHttpServer(
           port, cacheService, sessionService, userDAO);
 
