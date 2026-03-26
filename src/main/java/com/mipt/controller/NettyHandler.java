@@ -730,7 +730,18 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         "Examples:\n" +
         "  Auth:         curl \"http://localhost:8080/auth?login=default&password=admin\"\n" +
         "  Create user:  curl -X PUT \"http://localhost:8080/user?session_token=XYZ&new_login=bob&password=123&permission=admin\"\n" +
-        "  Set cache:    curl -X POST -d 'data' \"http://localhost:8080/cache?session_token=XYZ&key=test&type=string&ttl=30s\"";
+        "  Set cache:    curl -X POST -d 'data' \"http://localhost:8080/cache?session_token=XYZ&key=test&type=string&ttl=30s\"\n\n" +
+        "== TCP API (port 9090) ==\n\n" +
+        "Connect: telnet localhost 9090\n\n" +
+        "COMMANDS:\n" +
+        "AUTH <login> <password>    -> authenticate\n" +
+        "GET <key>    -> get value\n" +
+        "SET <key> <type> <value>   -> set value\n" +
+        "DELETE <key>   -> delete value\n\n" +
+        "  TCP connect:  telnet localhost 9090\n" +
+        "  TCP auth:     AUTH default admin123\n" +
+        "  TCP set:      SET mykey string hello\n" +
+        "  TCP get:      GET mykey";
 
     FullHttpResponse response = createResponse(HttpResponseStatus.OK, info);
     ctx.writeAndFlush(response);
