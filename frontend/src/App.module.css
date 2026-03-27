@@ -1,0 +1,34 @@
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  font-size: 18px;
+  color: #667eea;
+}
+
+:global(.react-json-view) {
+  background: transparent !important;
+}
+
+:global(.react-json-view .string-value) {
+  color: #a6e22e !important;
+}
+
+:global(.react-json-view .number-value) {
+  color: #ae81ff !important;
+}
+
+:global(.react-json-view .boolean-value) {
+  color: #66d9ef !important;
+}
+
+:global(.react-json-view .null-value) {
+  color: #f92672 !important;
+}
