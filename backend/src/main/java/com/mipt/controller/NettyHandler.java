@@ -19,10 +19,12 @@ import io.netty.util.CharsetUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 
 public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
@@ -728,9 +730,9 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         "PUT    /configuration?session_token=TOKEN&maxmemory_policy=POLICY&max_storage_memory=SIZE\n\n" +
         "Max memory policies: " + String.join(", ", MaxMemoryPolicy.getAllValues()) + "\n\n" +
         "Examples:\n" +
-        "  Auth:         curl \"http://localhost:8080/auth?login=default&password=admin\"\n" +
-        "  Create user:  curl -X PUT \"http://localhost:8080/user?session_token=XYZ&new_login=bob&password=123&permission=admin\"\n" +
-        "  Set cache:    curl -X POST -d 'data' \"http://localhost:8080/cache?session_token=XYZ&key=test&type=string&ttl=30s\"\n\n" +
+        "  Auth:         curl \"" + baseUrl + "/auth?login=default&password=admin\"\n" +
+        "  Create user:  curl -X PUT \"" + baseUrl + "/user?session_token=XYZ&new_login=bob&password=123&permission=admin\"\n" +
+        "  Set cache:    curl -X POST -d 'data' \"" + baseUrl + "/cache?session_token=XYZ&key=test&type=string&ttl=30s\"\n\n" +
         "== TCP API (port 9090) ==\n\n" +
         "Connect: telnet localhost 9090\n\n" +
         "COMMANDS:\n" +
@@ -745,6 +747,18 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     FullHttpResponse response = createResponse(HttpResponseStatus.OK, info);
     ctx.writeAndFlush(response);
+  }
+
+  private String loadServerPortForExamples() {
+    Properties props = new Properties();
+    try (InputStream input = NettyHandler.class.getClassLoader().getResourceAsStream("application.properties")) {
+      if (input != null) {
+        props.load(input);
+      }
+    } catch (Exception e) {
+      log.warn("Could not read server port from config for info page examples");
+    }
+    return props.getProperty("server.port", "8080");
   }
 
   private void sendBadRequest(ChannelHandlerContext ctx, String message) {
