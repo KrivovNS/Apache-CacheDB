@@ -19,14 +19,14 @@ public class Main {
   public static void main(String[] args) {
     try {
       // 1. Загружаем порт из конфигурации
-      int port = 8080;
+      int port = 7070;
       try {
         Properties props = new Properties();
         props.load(Main.class.getClassLoader()
             .getResourceAsStream("application.properties"));
-        port = Integer.parseInt(props.getProperty("server.port", "8080"));
+        port = Integer.parseInt(props.getProperty("server.port", "7070"));
       } catch (Exception e) {
-        log.warn("Could not read config, using default port 8080");
+        log.warn("Could not read config, using default port 7070");
       }
 
       log.info("Server starting on port: {}", port);

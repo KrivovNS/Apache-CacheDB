@@ -11,6 +11,9 @@ import org.slf4j.LoggerFactory;
 public class DatabaseConnection {
 
   private static final Logger log = LoggerFactory.getLogger(DatabaseConnection.class);
+  private static final String DEFAULT_DB_URL = "jdbc:h2:file:./data/storagedb;DB_CLOSE_DELAY=-1";
+  private static final String DEFAULT_DB_USERNAME = "sa";
+  private static final String DEFAULT_DB_PASSWORD = "";
   private static Connection connection;
 
   public static Connection getConnection() throws SQLException {
@@ -27,9 +30,23 @@ public class DatabaseConnection {
           }
         }
 
-        String url = props.getProperty("db.url");
-        String username = props.getProperty("db.username");
-        String password = props.getProperty("db.password");
+        // System properties override file config (useful for CI/tests).
+        String url = System.getProperty(
+            "db.url",
+            props.getProperty("db.url", DEFAULT_DB_URL)
+        );
+        String username = System.getProperty(
+            "db.username",
+            props.getProperty("db.username", DEFAULT_DB_USERNAME)
+        );
+        String password = System.getProperty(
+            "db.password",
+            props.getProperty("db.password", DEFAULT_DB_PASSWORD)
+        );
+
+        if (url == null || url.isBlank()) {
+          throw new SQLException("Database URL is not configured");
+        }
 
         log.info("Connecting to database: {}", url);
 
