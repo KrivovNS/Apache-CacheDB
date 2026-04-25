@@ -8,6 +8,7 @@ import com.mipt.model.MaxMemoryPolicy;
 import com.mipt.model.HttpMethod;
 import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
+import com.mipt.telemetry.TelemetryService;
 import com.mipt.database.dao.UserDAO;
 import com.mipt.model.User;
 import io.netty.buffer.ByteBuf;
@@ -21,6 +22,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -32,25 +34,40 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   private final SessionService sessionService;
   private final UserDAO userDAO;
   private final RequestParametersValidator validator;
+  private final TelemetryService telemetryService;
 
   public NettyHandler(CacheStorageService cacheService,
       SessionService sessionService,
-      UserDAO userDAO) {
+      UserDAO userDAO,
+      TelemetryService telemetryService) {
     this.cacheService = cacheService;
     this.sessionService = sessionService;
     this.userDAO = userDAO;
     this.validator = new RequestParametersValidator();
+    this.telemetryService = telemetryService;
+  }
+
+  public NettyHandler(CacheStorageService cacheService,
+      SessionService sessionService,
+      UserDAO userDAO) {
+    this(cacheService, sessionService, userDAO, TelemetryService.disabled(cacheService));
   }
 
   @Override
   protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest request) throws Exception {
     String methodStr = request.method().name();
     String uri = request.uri();
+    String requestType = resolveHttpRequestType(methodStr, uri);
 
     log.info("Received {} request: {}", methodStr, uri);
 
+    if (uri.startsWith("/metrics")) {
+      sendMetrics(ctx, requestType);
+      return;
+    }
+
     if ("/".equals(uri)) {
-      sendInfoPage(ctx);
+      sendInfoPage(ctx, requestType);
       return;
     }
 
@@ -58,42 +75,43 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     ValidationResult validation = validator.validateRequest(methodStr, uri);
     if (!validation.getValid()) {
-      sendBadRequest(ctx, validation.getErrors());
+      sendBadRequest(ctx, validation.getErrors(), requestType);
       return;
     }
 
     // Конвертируем строку в enum
     HttpMethod method = HttpMethod.fromString(methodStr);
     if (method == null) {
-      sendBadRequest(ctx, "Invalid HTTP method: " + methodStr);
+      sendBadRequest(ctx, "Invalid HTTP method: " + methodStr, requestType);
       return;
     }
 
     // Обработка запросов к кэшу
     if (uri.startsWith("/cache")) {
-      handleCacheRequest(ctx, method, uri, content);
+      handleCacheRequest(ctx, method, uri, content, requestType);
       return;
     }
 
     if (uri.startsWith("/auth")) {
-      handleAuthRequest(ctx, method, uri, content);
+      handleAuthRequest(ctx, method, uri, content, requestType);
       return;
     }
 
     if (uri.startsWith("/configuration")) {
-      handleConfigRequest(ctx, method, uri, content);
+      handleConfigRequest(ctx, method, uri, content, requestType);
       return;
     }
 
     if (uri.startsWith("/user")) {
-      handleUserRequest(ctx, method, uri, content);
+      handleUserRequest(ctx, method, uri, content, requestType);
       return;
     }
 
-    sendNotFound(ctx, "Endpoint not found: " + uri);
+    sendNotFound(ctx, "Endpoint not found: " + uri, requestType);
   }
 
-  private void handleCacheRequest(ChannelHandlerContext ctx, HttpMethod method, String uri, String content) {
+  private void handleCacheRequest(ChannelHandlerContext ctx, HttpMethod method, String uri,
+      String content, String requestType) {
     Map<String, String> params = parseUri(uri);
     String sessionToken = params.get("session_token");
     String key = params.get("key");
@@ -104,7 +122,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       // Проверяем валидность сессии
       if (!isSessionValid(sessionToken)) {
         response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
-        ctx.writeAndFlush(response);
+        writeHttpResponse(ctx, response, requestType);
         return;
       }
 
@@ -112,7 +130,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       if (sessionToken == null || key == null) {
         response = createResponse(HttpResponseStatus.BAD_REQUEST,
             "Missing required parameters: session_token and key");
-        ctx.writeAndFlush(response);
+        writeHttpResponse(ctx, response, requestType);
         return;
       }
 
@@ -120,7 +138,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       Optional<Session> sessionOpt = sessionService.getValidSession(sessionToken);
       if (sessionOpt.isEmpty()) {
         response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
-        ctx.writeAndFlush(response);
+        writeHttpResponse(ctx, response, requestType);
         return;
       }
 
@@ -134,7 +152,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         if (userPermission == PermissionType.READER) {
           response = createResponse(HttpResponseStatus.FORBIDDEN,
               "READER users can only get data");
-          ctx.writeAndFlush(response);
+          writeHttpResponse(ctx, response, requestType);
           return;
         }
         response = handleCacheWrite(method, sessionToken, key, params, content);
@@ -142,7 +160,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         if (userPermission == PermissionType.READER) {
           response = createResponse(HttpResponseStatus.FORBIDDEN,
               "READER users can only get data");
-          ctx.writeAndFlush(response);
+          writeHttpResponse(ctx, response, requestType);
           return;
         }
         response = handleCacheDelete(key);
@@ -156,7 +174,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
           "Server error: " + e.getMessage());
     }
 
-    ctx.writeAndFlush(response);
+    writeHttpResponse(ctx, response, requestType);
   }
 
   private FullHttpResponse handleCacheGet(String key) {
@@ -224,13 +242,11 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       String username = user.getUsername();
 
       // Рассчитываем размер данных
-      long sizeBytes = content.getBytes(StandardCharsets.UTF_8).length;
-
       CacheResult result;
       if (method.isPost()) {
-        result = cacheService.post(key, content, dataType, username, ttlSeconds, sizeBytes);
+        result = cacheService.post(key, content, dataType, username, ttlSeconds);
       } else { // PUT
-        result = cacheService.put(key, content, dataType, username, ttlSeconds, sizeBytes);
+        result = cacheService.put(key, content, dataType, username, ttlSeconds);
       }
 
       if (!result.isSuccess()) {
@@ -268,7 +284,8 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
   }
 
-  private void handleAuthRequest(ChannelHandlerContext ctx, HttpMethod method, String uri, String content) {
+  private void handleAuthRequest(ChannelHandlerContext ctx, HttpMethod method, String uri,
+      String content, String requestType) {
     Map<String, String> params = parseUri(uri);
     FullHttpResponse response;
 
@@ -286,7 +303,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
           "Server error: " + e.getMessage());
     }
 
-    ctx.writeAndFlush(response);
+    writeHttpResponse(ctx, response, requestType);
   }
 
   private FullHttpResponse handleAuthLogin(Map<String, String> params) {
@@ -327,7 +344,8 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
   }
 
-  private void handleConfigRequest(ChannelHandlerContext ctx, HttpMethod method, String uri, String content) {
+  private void handleConfigRequest(ChannelHandlerContext ctx, HttpMethod method, String uri,
+      String content, String requestType) {
     Map<String, String> params = parseUri(uri);
     FullHttpResponse response;
 
@@ -337,7 +355,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       // Проверяем валидность сессии
       if (!isSessionValid(sessionToken)) {
         response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
-        ctx.writeAndFlush(response);
+        writeHttpResponse(ctx, response, requestType);
         return;
       }
 
@@ -345,7 +363,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       if (!isSuperAdminSession(sessionToken)) {
         response = createResponse(HttpResponseStatus.FORBIDDEN,
             "Only SUPERADMIN users can modify configuration");
-        ctx.writeAndFlush(response);
+        writeHttpResponse(ctx, response, requestType);
         return;
       }
 
@@ -362,7 +380,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
           "Server error: " + e.getMessage());
     }
 
-    ctx.writeAndFlush(response);
+    writeHttpResponse(ctx, response, requestType);
   }
 
   private FullHttpResponse handleUpdateConfiguration(Map<String, String> params) {
@@ -427,7 +445,8 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
   }
 
-  private void handleUserRequest(ChannelHandlerContext ctx, HttpMethod method, String uri, String content) {
+  private void handleUserRequest(ChannelHandlerContext ctx, HttpMethod method, String uri,
+      String content, String requestType) {
     Map<String, String> params = parseUri(uri);
     FullHttpResponse response;
 
@@ -437,7 +456,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       // Проверяем валидность сессии
       if (!isSessionValid(sessionToken)) {
         response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
-        ctx.writeAndFlush(response);
+        writeHttpResponse(ctx, response, requestType);
         return;
       }
 
@@ -445,7 +464,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       if (!isSuperAdminSession(sessionToken)) {
         response = createResponse(HttpResponseStatus.FORBIDDEN,
             "Only SUPERADMIN users can manage users");
-        ctx.writeAndFlush(response);
+        writeHttpResponse(ctx, response, requestType);
         return;
       }
 
@@ -465,7 +484,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
           "Server error: " + e.getMessage());
     }
 
-    ctx.writeAndFlush(response);
+    writeHttpResponse(ctx, response, requestType);
   }
 
   private FullHttpResponse handleCreateUser(Map<String, String> params) {
@@ -707,7 +726,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
   }
 
-  private void sendInfoPage(ChannelHandlerContext ctx) {
+  private void sendInfoPage(ChannelHandlerContext ctx, String requestType) {
     String info = "Cache Storage HTTP Server\n\n" +
         "Available endpoints:\n\n" +
         "AUTHENTICATION:\n" +
@@ -744,17 +763,17 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         "  TCP get:      GET mykey";
 
     FullHttpResponse response = createResponse(HttpResponseStatus.OK, info);
-    ctx.writeAndFlush(response);
+    writeHttpResponse(ctx, response, requestType);
   }
 
-  private void sendBadRequest(ChannelHandlerContext ctx, String message) {
+  private void sendBadRequest(ChannelHandlerContext ctx, String message, String requestType) {
     FullHttpResponse response = createResponse(HttpResponseStatus.BAD_REQUEST, message);
-    ctx.writeAndFlush(response);
+    writeHttpResponse(ctx, response, requestType);
   }
 
-  private void sendNotFound(ChannelHandlerContext ctx, String message) {
+  private void sendNotFound(ChannelHandlerContext ctx, String message, String requestType) {
     FullHttpResponse response = createResponse(HttpResponseStatus.NOT_FOUND, message);
-    ctx.writeAndFlush(response);
+    writeHttpResponse(ctx, response, requestType);
   }
 
   private Map<String, String> parseUri(String uri) {
@@ -774,17 +793,66 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     return params;
   }
 
+  private String resolveHttpRequestType(String method, String uri) {
+    String normalizedMethod = method == null ? "unknown" : method.toLowerCase(Locale.ROOT);
+    String path = uri;
+    int queryStart = uri.indexOf('?');
+    if (queryStart >= 0) {
+      path = uri.substring(0, queryStart);
+    }
+
+    if ("/".equals(path)) {
+      return "http.root." + normalizedMethod;
+    }
+    if (path.startsWith("/cache")) {
+      return "http.cache." + normalizedMethod;
+    }
+    if (path.startsWith("/auth")) {
+      return "http.auth." + normalizedMethod;
+    }
+    if (path.startsWith("/configuration")) {
+      return "http.configuration." + normalizedMethod;
+    }
+    if (path.startsWith("/user")) {
+      return "http.user." + normalizedMethod;
+    }
+    if (path.startsWith("/metrics")) {
+      return "http.metrics." + normalizedMethod;
+    }
+
+    return "http.unknown." + normalizedMethod;
+  }
+
   private FullHttpResponse createResponse(HttpResponseStatus status, String content) {
+    return createResponse(status, content, "text/plain; charset=UTF-8");
+  }
+
+  private FullHttpResponse createResponse(HttpResponseStatus status, String content, String contentType) {
     ByteBuf buffer = Unpooled.copiedBuffer(content, StandardCharsets.UTF_8);
     FullHttpResponse response = new DefaultFullHttpResponse(
         HttpVersion.HTTP_1_1, status, buffer
     );
 
-    response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=UTF-8");
+    response.headers().set(HttpHeaderNames.CONTENT_TYPE, contentType);
     response.headers().set(HttpHeaderNames.CONTENT_LENGTH, buffer.readableBytes());
     response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, "*");
 
     return response;
+  }
+
+  private void sendMetrics(ChannelHandlerContext ctx, String requestType) {
+    FullHttpResponse response = createResponse(
+        HttpResponseStatus.OK,
+        telemetryService.scrapePrometheus(),
+        "text/plain; version=0.0.4; charset=UTF-8"
+    );
+    writeHttpResponse(ctx, response, requestType);
+  }
+
+  private void writeHttpResponse(ChannelHandlerContext ctx, FullHttpResponse response,
+      String requestType) {
+    telemetryService.recordHttpRequest(requestType, response.status().code());
+    ctx.writeAndFlush(response);
   }
 
   @Override
@@ -795,6 +863,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         HttpResponseStatus.INTERNAL_SERVER_ERROR,
         "Server error: " + cause.getMessage()
     );
-    ctx.writeAndFlush(errorResponse);
+    writeHttpResponse(ctx, errorResponse, "http.exception");
   }
 }

@@ -5,12 +5,15 @@ import com.mipt.model.DataType;
 import com.mipt.model.MaxMemoryPolicy;
 import com.mipt.service.CacheStorageService;
 import com.mipt.utils.TestUtils;
-import org.junit.jupiter.api.Test;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class EvictionPolicyTest {
 
@@ -18,7 +21,6 @@ public class EvictionPolicyTest {
 
   @Test
   void testNOEVICTION_Policy() throws Exception {
-    // NOEVICTION
     CacheStorageService service = TestUtils.createTestService(
         MaxMemoryPolicy.NOEVICTION,
         SMALL_MEMORY,
@@ -26,20 +28,16 @@ public class EvictionPolicyTest {
     );
 
     long entrySize = SMALL_MEMORY / 2 - 100;
-    CacheResult result1 = service.post("key1", "value1", DataType.STRING,
-        "user", null, entrySize);
+    CacheResult result1 = service.post("key1", sizedValue("key1", entrySize), DataType.STRING, "user", null);
     assertTrue(result1.isSuccess());
 
-    CacheResult result2 = service.post("key2", "value2", DataType.STRING,
-        "user", null, entrySize);
+    CacheResult result2 = service.post("key2", sizedValue("key2", entrySize), DataType.STRING, "user", null);
     assertTrue(result2.isSuccess());
 
-    // Попытка добавить третий элемент
-    CacheResult result3 = service.post("key3", "value3", DataType.STRING,
-        "user", null, 1000);
+    CacheResult result3 = service.post("key3", sizedValue("key3", 1000), DataType.STRING, "user", null);
     assertFalse(result3.isSuccess());
-    assertTrue(result3.getMessage().contains("Memory overflow") ||
-        result3.getMessage().contains("Not enough memory"));
+    assertTrue(result3.getMessage().contains("Memory overflow")
+        || result3.getMessage().contains("Not enough memory"));
   }
 
   @Test
@@ -50,30 +48,25 @@ public class EvictionPolicyTest {
         false
     );
 
-    // Заполняем всю память тремя элементами
     long entrySize = SMALL_MEMORY / 3;
-    service.post("key1", "value1", DataType.STRING, "user", null, entrySize);
-    service.post("key2", "value2", DataType.STRING, "user", null, entrySize);
-    service.post("key3", "value3", DataType.STRING, "user", null, entrySize);
+    service.post("key1", sizedValue("key1", entrySize), DataType.STRING, "user", null);
+    service.post("key2", sizedValue("key2", entrySize), DataType.STRING, "user", null);
+    service.post("key3", sizedValue("key3", entrySize), DataType.STRING, "user", null);
 
     assertTrue(service.get("key1").isSuccess());
     assertTrue(service.get("key2").isSuccess());
     assertTrue(service.get("key3").isSuccess());
 
-    // Добавляем четвертый элемент - должен вытеснить LRU
-    service.post("key4", "value4", DataType.STRING, "user", null, entrySize);
+    service.post("key4", sizedValue("key4", entrySize), DataType.STRING, "user", null);
 
-    // key1 должен быть вытеснен
     assertFalse(service.get("key1").isSuccess());
-
     assertTrue(service.get("key2").isSuccess());
     assertTrue(service.get("key3").isSuccess());
     assertTrue(service.get("key4").isSuccess());
 
     service.get("key2");
 
-    // Добавляем пятый элемент - должен вытеснить key3
-    service.post("key5", "value5", DataType.STRING, "user", null, entrySize);
+    service.post("key5", sizedValue("key5", entrySize), DataType.STRING, "user", null);
 
     assertFalse(service.get("key3").isSuccess());
     assertTrue(service.get("key2").isSuccess());
@@ -89,13 +82,12 @@ public class EvictionPolicyTest {
         false
     );
 
-    // Создаем смесь элементов
-    service.post("volatile1", "value1", DataType.STRING, "user", 10L, SMALL_MEMORY / 3);
-    service.post("persistent1", "value2", DataType.STRING, "user", null, SMALL_MEMORY / 3);
-    service.post("volatile2", "value3", DataType.STRING, "user", 10L, SMALL_MEMORY / 3);
+    long entrySize = SMALL_MEMORY / 3;
+    service.post("volatile1", sizedValue("volatile1", entrySize), DataType.STRING, "user", 10L);
+    service.post("persistent1", sizedValue("persistent1", entrySize), DataType.STRING, "user", null);
+    service.post("volatile2", sizedValue("volatile2", entrySize), DataType.STRING, "user", 10L);
 
-    // Добавляем четвертый элемент - должен вытеснить volatile элемент
-    service.post("key4", "value4", DataType.STRING, "user", null, SMALL_MEMORY / 3);
+    service.post("key4", sizedValue("key4", entrySize), DataType.STRING, "user", null);
 
     int volatileCount = 0;
     if (service.get("volatile1").isSuccess()) {
@@ -106,10 +98,7 @@ public class EvictionPolicyTest {
     }
 
     assertEquals(1, volatileCount);
-
-    // persistent1 должен остаться
     assertTrue(service.get("persistent1").isSuccess());
-    // key4 должен остаться
     assertTrue(service.get("key4").isSuccess());
   }
 
@@ -122,20 +111,16 @@ public class EvictionPolicyTest {
     );
 
     long entrySize = SMALL_MEMORY / 3;
-
-    // Добавляем три элемента
-    service.post("key1", "value1", DataType.STRING, "user", null, entrySize);
-    service.post("key2", "value2", DataType.STRING, "user", null, entrySize);
-    service.post("key3", "value3", DataType.STRING, "user", null, entrySize);
+    service.post("key1", sizedValue("key1", entrySize), DataType.STRING, "user", null);
+    service.post("key2", sizedValue("key2", entrySize), DataType.STRING, "user", null);
+    service.post("key3", sizedValue("key3", entrySize), DataType.STRING, "user", null);
 
     service.get("key1");
     service.get("key1");
     service.get("key1");
-
     service.get("key2");
 
-    // Добавляем четвертый элемент - должен вытеснить key3 (наименее используемый)
-    service.post("key4", "value4", DataType.STRING, "user", null, entrySize);
+    service.post("key4", sizedValue("key4", entrySize), DataType.STRING, "user", null);
 
     assertFalse(service.get("key3").isSuccess());
     assertTrue(service.get("key1").isSuccess());
@@ -152,24 +137,17 @@ public class EvictionPolicyTest {
     );
 
     long entrySize = SMALL_MEMORY / 3;
-
-    // Создаем смесь элементов
-    service.post("volatile1", "value1", DataType.STRING, "user", 10L, entrySize);
-    service.post("persistent1", "value2", DataType.STRING, "user", null, entrySize);
-    service.post("volatile2", "value3", DataType.STRING, "user", 10L, entrySize);
+    service.post("volatile1", sizedValue("volatile1", entrySize), DataType.STRING, "user", 10L);
+    service.post("persistent1", sizedValue("persistent1", entrySize), DataType.STRING, "user", null);
+    service.post("volatile2", sizedValue("volatile2", entrySize), DataType.STRING, "user", 10L);
 
     service.get("volatile1");
     service.get("volatile1");
 
-    // Добавляем четвертый элемент - должен вытеснить volatile2 (наименее используемый volatile)
-    service.post("key4", "value4", DataType.STRING, "user", null, entrySize);
+    service.post("key4", sizedValue("key4", entrySize), DataType.STRING, "user", null);
 
-    // volatile2 должен быть вытеснен
     assertFalse(service.get("volatile2").isSuccess());
-
     assertTrue(service.get("volatile1").isSuccess());
-
-    // persistent1 и key4 должны остаться
     assertTrue(service.get("persistent1").isSuccess());
     assertTrue(service.get("key4").isSuccess());
   }
@@ -182,22 +160,16 @@ public class EvictionPolicyTest {
         false
     );
 
-    long initialSize = SMALL_MEMORY / 2;
-    long updatedSize = SMALL_MEMORY / 4;
+    String initialValue = sizedValue("key", SMALL_MEMORY / 2);
+    String updatedValue = sizedValue("key", SMALL_MEMORY / 4);
 
-    // Добавляем элемент через POST
-    service.post("key", "initial value", DataType.STRING, "user", null, initialSize);
+    service.post("key", initialValue, DataType.STRING, "user", null);
+    service.put("key", updatedValue, DataType.STRING, "user", null);
 
-    // Обновляем элемент через PUT с меньшим размером
-    service.put("key", "updated value", DataType.STRING, "user", null, updatedSize);
-
-    // Должен остаться в памяти
     assertTrue(service.get("key").isSuccess());
-    assertEquals("updated value", service.get("key").getData());
+    assertEquals(updatedValue, service.get("key").getData());
 
-    // Проверяем, что можно добавить больше элементов (память освобождена)
-    service.post("key2", "value2", DataType.STRING, "user", null,
-        SMALL_MEMORY - updatedSize - 100);
+    service.post("key2", sizedValue("key2", SMALL_MEMORY / 2 - 1024), DataType.STRING, "user", null);
     assertTrue(service.get("key2").isSuccess());
   }
 
@@ -226,8 +198,7 @@ public class EvictionPolicyTest {
           String value = "value-" + threadId + "-" + j;
 
           try {
-            CacheResult result = service.post(key, value, DataType.STRING,
-                "user", null, 512);
+            CacheResult result = service.post(key, value, DataType.STRING, "user", null);
 
             if (result.isSuccess()) {
               successfulOperations.incrementAndGet();
@@ -239,8 +210,8 @@ public class EvictionPolicyTest {
               String message = result.getMessage();
               if (message.contains("already exists")) {
                 keyExistsErrors.incrementAndGet();
-              } else if (message.contains("Not enough memory") ||
-                  message.contains("Memory overflow")) {
+              } else if (message.contains("Not enough memory")
+                  || message.contains("Memory overflow")) {
                 memoryErrors.incrementAndGet();
               } else {
                 otherErrors.incrementAndGet();
@@ -254,12 +225,10 @@ public class EvictionPolicyTest {
       threads.add(thread);
     }
 
-    // Запускаем все потоки
     for (Thread thread : threads) {
       thread.start();
     }
 
-    // Ждем завершения с таймаутом
     for (Thread thread : threads) {
       try {
         thread.join(5000);
@@ -268,7 +237,6 @@ public class EvictionPolicyTest {
       }
     }
 
-    // Выводим статистику
     System.out.println("=== Concurrent Test Results ===");
     System.out.println("Successful operations: " + successfulOperations.get());
     System.out.println("Key exists errors: " + keyExistsErrors.get());
@@ -277,11 +245,16 @@ public class EvictionPolicyTest {
     System.out.println("Total attempts: " + (numThreads * operationsPerThread));
 
     assertTrue(successfulOperations.get() > 0,
-        "Должна быть хотя бы одна успешная операция");
+        "There should be at least one successful operation");
 
-    // Проверяем, что сервис не сломался
-    service.post("final-key", "final-value", DataType.STRING, "user", null, 100);
+    service.post("final-key", "final-value", DataType.STRING, "user", null);
     assertTrue(service.get("final-key").isSuccess(),
-        "Сервис должен продолжать работать после конкурентного доступа");
+        "Service should continue working after concurrent access");
+  }
+
+  private String sizedValue(String key, long targetEntryBytes) {
+    int keyBytes = key.getBytes(StandardCharsets.UTF_8).length;
+    int payloadBytes = (int) Math.max(1, targetEntryBytes - keyBytes);
+    return "x".repeat(payloadBytes);
   }
 }

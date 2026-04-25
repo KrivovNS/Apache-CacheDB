@@ -1,14 +1,19 @@
 package com.mipt.model;
 
-import com.mipt.cache.*;
+import com.mipt.cache.Cache;
+import com.mipt.cache.CacheResult;
+import com.mipt.cache.LFUCache;
+import com.mipt.cache.LRUCache;
+import com.mipt.cache.SimpleCache;
 import com.mipt.controller.DataTypeValidator;
-import java.util.concurrent.atomic.AtomicLong;
+import com.mipt.controller.MemoryCalculator;
 import com.mipt.database.dao.CacheEntryDAO;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class CacheStorage {
 
-  private final Cache mainCache;      // Основное хранилище (LRU или Simple)
-  private final Cache ttlCache;       // Хранилище для ключей с TTL
+  private final Cache mainCache;
+  private final Cache ttlCache;
   private final AtomicLong memoryUsed;
   private final long maxMemoryBytes;
   private final MaxMemoryPolicy maxMemoryPolicy;
@@ -41,9 +46,14 @@ public class CacheStorage {
     };
   }
 
-  // Основные операции
+  // Kept for backward compatibility; sizeBytes is ignored.
   public CacheResult set(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes, HttpMethod httpMethod) {
+    return set(key, value, dataType, user, ttlSeconds, httpMethod);
+  }
+
+  public CacheResult set(String key, Object value, DataType dataType,
+      String user, Long ttlSeconds, HttpMethod httpMethod) {
     boolean isUpdate = httpMethod == HttpMethod.PUT;
     try {
       String dataString;
@@ -52,7 +62,6 @@ public class CacheStorage {
       } else if (value instanceof String) {
         dataString = (String) value;
       } else if (value instanceof byte[]) {
-        // Для байтового массива преобразуем в Base64 для валидации
         dataString = java.util.Base64.getEncoder().encodeToString((byte[]) value);
       } else {
         dataString = value.toString();
@@ -62,18 +71,21 @@ public class CacheStorage {
         return CacheResult.error("Invalid data format for type: " + dataType);
       }
 
-      // Преобразование данных для хранения
       Object processedValue;
       try {
-        processedValue = DataTypeValidator.processDataForStorage(
-            dataString,
-            dataType.getValue()
-        );
+        processedValue = DataTypeValidator.processDataForStorage(dataString, dataType.getValue());
       } catch (IllegalArgumentException e) {
         return CacheResult.error("Data processing error: " + e.getMessage());
       }
 
-      if (sizeBytes > maxMemoryBytes) {
+      long entrySizeBytes;
+      try {
+        entrySizeBytes = MemoryCalculator.calculateEntrySizeBytes(key, dataType, processedValue);
+      } catch (IllegalArgumentException e) {
+        return CacheResult.error("Size calculation error: " + e.getMessage());
+      }
+
+      if (entrySizeBytes > maxMemoryBytes) {
         return CacheResult.error("Data exceeding the memory limit");
       }
 
@@ -84,9 +96,7 @@ public class CacheStorage {
         if (existingEntry != null && isUpdate) {
           existingSize = existingEntry.getSizeInBytes();
         }
-        long netSizeChange = isUpdate ?
-            sizeBytes - existingSize :
-            sizeBytes;
+        long netSizeChange = isUpdate ? entrySizeBytes - existingSize : entrySizeBytes;
 
         if (memoryUsed.get() + netSizeChange > maxMemoryBytes) {
           switch (maxMemoryPolicy) {
@@ -121,7 +131,6 @@ public class CacheStorage {
 
                 CacheEntry cacheEntry = (CacheEntry) mainCache.get(keyToDelete);
                 if (cacheEntry != null) {
-                  memoryUsed.addAndGet(-cacheEntry.getSizeInBytes());
                   this.delete((String) keyToDelete);
                 }
               }
@@ -132,20 +141,17 @@ public class CacheStorage {
             return CacheResult.error("Not enough memory even after eviction");
           }
         }
+
         if (isUpdate && existingEntry != null) {
           memoryUsed.addAndGet(-existingEntry.getSizeInBytes());
-
           if (existingEntry.getExpiresAt() != null) {
             ttlCache.remove(key);
           }
         }
 
-        CacheEntry entry = new CacheEntry(
-            dataType, processedValue, sizeBytes, user, ttlSeconds
-        );
-
+        CacheEntry entry = new CacheEntry(dataType, processedValue, entrySizeBytes, user, ttlSeconds);
         mainCache.put(key, entry);
-        memoryUsed.addAndGet(sizeBytes);
+        memoryUsed.addAndGet(entrySizeBytes);
 
         if (ttlSeconds != null && ttlSeconds > 0) {
           ttlCache.put(key, entry);
@@ -179,10 +185,7 @@ public class CacheStorage {
 
       String formattedData;
       try {
-        formattedData = DataTypeValidator.formatDataForResponse(
-            entry.getData(),
-            entry.getDataType().getValue()
-        );
+        formattedData = DataTypeValidator.formatDataForResponse(entry.getData(), entry.getDataType().getValue());
       } catch (IllegalArgumentException e) {
         return CacheResult.error("Data formatting error: " + e.getMessage());
       }
@@ -214,7 +217,7 @@ public class CacheStorage {
   public void restoreEntry(String key, CacheEntry entry) {
     mainCache.put(key, entry);
     memoryUsed.addAndGet(entry.getSizeInBytes());
-    if (entry.isExpired()) {
+    if (entry.dataWithTtl() && !entry.isExpired()) {
       ttlCache.put(key, entry);
     }
   }
@@ -223,10 +226,8 @@ public class CacheStorage {
     return mainCache.containsKey(key);
   }
 
-  // Методы для очистки просроченных ключей
   public int cleanupExpired() {
     int removed = 0;
-    // Проходим по TTL кэшу
     for (Object key : ttlCache.getKeys()) {
       CacheEntry entry = (CacheEntry) ttlCache.get(key);
       if (entry != null && entry.isExpired()) {
@@ -235,5 +236,13 @@ public class CacheStorage {
       }
     }
     return removed;
+  }
+
+  public long getMemoryUsedBytes() {
+    return memoryUsed.get();
+  }
+
+  public long getMaxMemoryBytes() {
+    return maxMemoryBytes;
   }
 }

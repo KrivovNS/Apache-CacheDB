@@ -1,11 +1,14 @@
 package com.mipt;
 
+import com.mipt.database.dao.UserDAO;
+import com.mipt.database.initialization.DatabaseConnection;
 import com.mipt.database.initialization.DatabaseInitializer;
-import com.mipt.database.dao.*;
 import com.mipt.server.NettyHttpServer;
 import com.mipt.server.NettyTcpServer;
 import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
+import com.mipt.telemetry.TelemetryService;
+import java.io.InputStream;
 import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -17,42 +20,30 @@ public class Main {
   private static final Logger log = LoggerFactory.getLogger(Main.class);
 
   public static void main(String[] args) {
+    TelemetryService telemetryService = null;
     try {
-      // 1. Загружаем порт из конфигурации
-      int port = 8080;
-      try {
-        Properties props = new Properties();
-        props.load(Main.class.getClassLoader()
-            .getResourceAsStream("application.properties"));
-        port = Integer.parseInt(props.getProperty("server.port", "8080"));
-      } catch (Exception e) {
-        log.warn("Could not read config, using default port 8080");
-      }
+      Properties properties = loadApplicationProperties();
+      int port = parseHttpPort(properties);
 
       log.info("Server starting on port: {}", port);
-
-      // 2. Инициализируем базу данных
       log.info("Initializing database...");
       DatabaseInitializer.initializeDatabase();
 
-      // 3. Инициализируем DAO
       UserDAO userDAO = new UserDAO();
-
-      // 4. Инициализируем сервисы
       CacheStorageService cacheService = new CacheStorageService();
+      telemetryService = new TelemetryService(properties, cacheService);
       SessionService sessionService = new SessionService();
 
-      // 5. Запускаем очистку сессий каждую минуту
-      Executors.newScheduledThreadPool(1)
-          .scheduleAtFixedRate(() -> {
-            int removedSessions = sessionService.cleanupExpiredSessions();
-            if (removedSessions > 0) {
-              log.info("Cleanup: {} expired sessions removed", removedSessions);
-            }
-          }, 1, 1, TimeUnit.MINUTES);
+      Executors.newScheduledThreadPool(1).scheduleAtFixedRate(() -> {
+        int removedSessions = sessionService.cleanupExpiredSessions();
+        if (removedSessions > 0) {
+          log.info("Cleanup: {} expired sessions removed", removedSessions);
+        }
+      }, 1, 1, TimeUnit.MINUTES);
 
-      // 6. Запускаем TCP-сервер в отдельном потоке (порт 9090)
-      NettyTcpServer tcpServer = new NettyTcpServer(9090, cacheService, sessionService, userDAO);
+      NettyTcpServer tcpServer = new NettyTcpServer(
+          9090, cacheService, sessionService, userDAO, telemetryService
+      );
       new Thread(() -> {
         try {
           tcpServer.run();
@@ -61,16 +52,38 @@ public class Main {
         }
       }, "tcp-server").start();
 
-      // 7. Запускаем Netty HTTP сервер (порт 8080)
-      NettyHttpServer server = new NettyHttpServer(
-          port, cacheService, sessionService, userDAO);
-
-      server.run();
-
+      NettyHttpServer httpServer = new NettyHttpServer(
+          port, cacheService, sessionService, userDAO, telemetryService
+      );
+      httpServer.run();
     } catch (Exception e) {
       log.error("Failed to start application", e);
     } finally {
-      com.mipt.database.initialization.DatabaseConnection.closeConnection();
+      if (telemetryService != null) {
+        telemetryService.close();
+      }
+      DatabaseConnection.closeConnection();
+    }
+  }
+
+  private static Properties loadApplicationProperties() {
+    Properties properties = new Properties();
+    try (InputStream stream = Main.class.getClassLoader().getResourceAsStream("application.properties")) {
+      if (stream != null) {
+        properties.load(stream);
+      }
+    } catch (Exception e) {
+      log.warn("Could not load application.properties, default values will be used");
+    }
+    return properties;
+  }
+
+  private static int parseHttpPort(Properties properties) {
+    try {
+      return Integer.parseInt(properties.getProperty("server.port", "8080"));
+    } catch (Exception exception) {
+      log.warn("Could not read server.port from config, using default 8080");
+      return 8080;
     }
   }
 }
