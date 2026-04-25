@@ -710,6 +710,8 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   }
 
   private void sendInfoPage(ChannelHandlerContext ctx) {
+    String baseUrl = "http://localhost:" + loadServerPortForExamples();
+
     String info = "Cache Storage HTTP Server\n\n" +
         "Available endpoints:\n\n" +
         "AUTHENTICATION:\n" +
