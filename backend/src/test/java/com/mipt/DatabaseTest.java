@@ -24,6 +24,7 @@ class DatabaseTest {
     }
 
     // Инициализируем базу
+    System.setProperty("db.url", "jdbc:h2:mem:databasetest;DB_CLOSE_DELAY=-1");
     DatabaseInitializer.initializeDatabase();
 
     System.out.println("Test database initialized");
@@ -81,5 +82,6 @@ class DatabaseTest {
   static void cleanupDatabase() {
     System.out.println("=== Cleaning up test database ===");
     DatabaseConnection.closeConnection();
+    System.clearProperty("db.url");
   }
 }

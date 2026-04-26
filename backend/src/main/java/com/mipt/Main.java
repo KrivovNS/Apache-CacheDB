@@ -33,6 +33,7 @@ public class Main {
       CacheStorageService cacheService = new CacheStorageService();
       telemetryService = new TelemetryService(properties, cacheService);
       SessionService sessionService = new SessionService();
+      telemetryService = new TelemetryService(properties, cacheService);
 
       Executors.newScheduledThreadPool(1).scheduleAtFixedRate(() -> {
         int removedSessions = sessionService.cleanupExpiredSessions();
