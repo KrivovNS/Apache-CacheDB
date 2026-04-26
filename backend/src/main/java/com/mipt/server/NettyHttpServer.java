@@ -3,6 +3,7 @@ package com.mipt.server;
 import com.mipt.controller.NettyHandler;
 import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
+import com.mipt.telemetry.TelemetryService;
 import com.mipt.database.dao.*;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
@@ -24,15 +25,25 @@ public class NettyHttpServer {
   private final CacheStorageService cacheService;
   private final SessionService sessionService;
   private final UserDAO userDAO;
+  private final TelemetryService telemetryService;
+
+  public NettyHttpServer(int port,
+      CacheStorageService cacheService,
+      SessionService sessionService,
+      UserDAO userDAO,
+      TelemetryService telemetryService) {
+    this.port = port;
+    this.cacheService = cacheService;
+    this.sessionService = sessionService;
+    this.userDAO = userDAO;
+    this.telemetryService = telemetryService;
+  }
 
   public NettyHttpServer(int port,
       CacheStorageService cacheService,
       SessionService sessionService,
       UserDAO userDAO) {
-    this.port = port;
-    this.cacheService = cacheService;
-    this.sessionService = sessionService;
-    this.userDAO = userDAO;
+    this(port, cacheService, sessionService, userDAO, TelemetryService.disabled(cacheService));
   }
 
   public void run() throws Exception {
@@ -51,7 +62,7 @@ public class NettyHttpServer {
 
               p.addLast(new HttpServerCodec());
               p.addLast(new HttpObjectAggregator(65536));
-              p.addLast(new NettyHandler(cacheService, sessionService, userDAO));
+              p.addLast(new NettyHandler(cacheService, sessionService, userDAO, telemetryService));
             }
           })
           .option(ChannelOption.SO_BACKLOG, 128)

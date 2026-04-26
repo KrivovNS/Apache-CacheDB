@@ -4,6 +4,7 @@ import com.mipt.controller.NettyTcpHandler;
 import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
 import com.mipt.database.dao.UserDAO;
+import com.mipt.telemetry.TelemetryService;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -26,15 +27,25 @@ public class NettyTcpServer {
   private final CacheStorageService cacheService;
   private final SessionService sessionService;
   private final UserDAO userDAO;
+  private final TelemetryService telemetryService;
+
+  public NettyTcpServer(int port,
+      CacheStorageService cacheService,
+      SessionService sessionService,
+      UserDAO userDAO,
+      TelemetryService telemetryService) {
+    this.port = port;
+    this.cacheService = cacheService;
+    this.sessionService = sessionService;
+    this.userDAO = userDAO;
+    this.telemetryService = telemetryService;
+  }
 
   public NettyTcpServer(int port,
       CacheStorageService cacheService,
       SessionService sessionService,
       UserDAO userDAO) {
-    this.port = port;
-    this.cacheService = cacheService;
-    this.sessionService = sessionService;
-    this.userDAO = userDAO;
+    this(port, cacheService, sessionService, userDAO, TelemetryService.disabled(cacheService));
   }
 
   public void run() throws Exception {
@@ -54,7 +65,7 @@ public class NettyTcpServer {
               p.addLast(new LineBasedFrameDecoder(8192));
               p.addLast(new StringDecoder(CharsetUtil.UTF_8));
               p.addLast(new StringEncoder(CharsetUtil.UTF_8));
-              p.addLast(new NettyTcpHandler(cacheService, sessionService, userDAO));
+              p.addLast(new NettyTcpHandler(cacheService, sessionService, userDAO, telemetryService));
             }
           })
           .option(ChannelOption.SO_BACKLOG, 128)

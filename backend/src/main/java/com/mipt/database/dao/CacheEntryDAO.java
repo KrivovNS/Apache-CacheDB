@@ -3,6 +3,7 @@ package com.mipt.database.dao;
 import com.mipt.model.CacheEntry;
 import com.mipt.model.CacheStorage;
 import com.mipt.model.DataType;
+import com.mipt.controller.MemoryCalculator;
 import com.mipt.database.initialization.DatabaseConnection;
 import com.mipt.service.CacheStorageService;
 import java.sql.*;
@@ -130,7 +131,7 @@ public class CacheEntryDAO {
           while (rs.next()) {
             String key = rs.getString("cache_key");
             Object data = extractDataValue(rs, dataType);
-            long sizeBytes = rs.getLong("size_bytes");
+            long sizeBytes = MemoryCalculator.calculateEntrySizeBytes(key, dataType, data);
             String createdByUser = rs.getString("created_by_user");
             Instant createdAt = rs.getTimestamp("created_at").toInstant();
 

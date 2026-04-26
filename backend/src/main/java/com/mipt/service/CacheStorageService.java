@@ -2,8 +2,8 @@ package com.mipt.service;
 
 import com.mipt.cache.CacheResult;
 import com.mipt.database.dao.CacheEntryDAO;
-import com.mipt.model.DataType;
 import com.mipt.model.CacheStorage;
+import com.mipt.model.DataType;
 import com.mipt.model.HttpMethod;
 import com.mipt.model.MaxMemoryPolicy;
 import java.io.IOException;
@@ -29,11 +29,9 @@ public class CacheStorageService {
     try {
       Properties props = loadProperties();
       this.maxMemory = Long.parseLong(props.getProperty("cache.max.memory", "104857600"));
-      this.maxMemoryPolicy = parsePolicy(props, "cache.max.memory.policy",
-          MaxMemoryPolicy.ALLKEYSLRU);
+      this.maxMemoryPolicy = parsePolicy(props, "cache.max.memory.policy", MaxMemoryPolicy.ALLKEYSLRU);
       this.canPolicyBeChanged = true;
       this.persistence = Boolean.parseBoolean(props.getProperty("cache.persistence", "false"));
-
     } catch (IOException e) {
       this.maxMemory = 100 * 1024 * 1024;
       this.maxMemoryPolicy = MaxMemoryPolicy.ALLKEYSLRU;
@@ -42,57 +40,54 @@ public class CacheStorageService {
     }
 
     cacheEntryDAO = new CacheEntryDAO();
-
     createCacheStorages();
 
-    // Загружаем данные из БД если persistence включен
     if (persistence) {
       loadFromDatabase();
     }
 
     this.cleanupScheduler = Executors.newSingleThreadScheduledExecutor();
-    this.cleanupScheduler.scheduleAtFixedRate(
-        this::cleanupDatabase,
-        1, 1, TimeUnit.MINUTES
-    );
+    this.cleanupScheduler.scheduleAtFixedRate(this::cleanupDatabase, 1, 1, TimeUnit.MINUTES);
   }
 
-  /**
-   * Загружает данные из базы данных в кэш
-   */
   public void loadFromDatabase() {
     try {
-      // Создаем таблицы если их нет
       cacheEntryDAO.createAllTables();
-      // Загружаем данные из БД в кэш
       cacheEntryDAO.loadEntriesIntoCacheStorage(this);
-
-      System.out.println("Данные успешно загружены из базы данных");
-
+      System.out.println("Data loaded from database successfully");
     } catch (SQLException e) {
-      System.err.println("Ошибка при загрузке данных из БД: " + e.getMessage());
+      System.err.println("Error while loading data from database: " + e.getMessage());
       e.printStackTrace();
     }
   }
 
-  // Основные операции
-  public CacheResult post(String key, Object value, DataType dataType,
-      String user, Long ttlSeconds, long sizeBytes) {
+  public CacheResult post(String key, Object value, DataType dataType, String user, Long ttlSeconds) {
     if (canPolicyBeChanged) {
       canPolicyBeChanged = false;
     }
     if (!database.containsKey(key)) {
-      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes, HttpMethod.POST);
+      return database.set(key, value, dataType, user, ttlSeconds, HttpMethod.POST);
     }
     return CacheResult.error("The key already exists");
   }
 
-  public CacheResult put(String key, Object value, DataType dataType,
+  // Kept for backward compatibility; sizeBytes is ignored.
+  public CacheResult post(String key, Object value, DataType dataType,
       String user, Long ttlSeconds, long sizeBytes) {
+    return post(key, value, dataType, user, ttlSeconds);
+  }
+
+  public CacheResult put(String key, Object value, DataType dataType, String user, Long ttlSeconds) {
     if (database.containsKey(key)) {
-      return database.set(key, value, dataType, user, ttlSeconds, sizeBytes,HttpMethod.PUT);
+      return database.set(key, value, dataType, user, ttlSeconds, HttpMethod.PUT);
     }
     return CacheResult.error("The key not exists");
+  }
+
+  // Kept for backward compatibility; sizeBytes is ignored.
+  public CacheResult put(String key, Object value, DataType dataType,
+      String user, Long ttlSeconds, long sizeBytes) {
+    return put(key, value, dataType, user, ttlSeconds);
   }
 
   public CacheResult get(String key) {
@@ -103,7 +98,6 @@ public class CacheStorageService {
     return database.delete(key);
   }
 
-  // Вспомогательные методы
   private void cleanupDatabase() {
     int removed = database.cleanupExpired();
     if (removed > 0) {
@@ -136,8 +130,7 @@ public class CacheStorageService {
 
   private Properties loadProperties() throws IOException {
     Properties props = new Properties();
-    try (InputStream input = getClass().getClassLoader()
-        .getResourceAsStream("application.properties")) {
+    try (InputStream input = getClass().getClassLoader().getResourceAsStream("application.properties")) {
       if (input != null) {
         props.load(input);
       }
@@ -159,5 +152,13 @@ public class CacheStorageService {
 
   private void createCacheStorages() {
     database = new CacheStorage(maxMemory, maxMemoryPolicy, persistence, cacheEntryDAO);
+  }
+
+  public long getUsedMemoryBytes() {
+    return database.getMemoryUsedBytes();
+  }
+
+  public long getConfiguredMaxMemoryBytes() {
+    return maxMemory;
   }
 }
