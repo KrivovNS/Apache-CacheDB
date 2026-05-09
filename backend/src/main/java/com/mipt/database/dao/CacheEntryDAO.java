@@ -1,21 +1,24 @@
 package com.mipt.database.dao;
 
+import com.mipt.controller.MemoryCalculator;
+import com.mipt.database.initialization.DatabaseConnection;
 import com.mipt.model.CacheEntry;
 import com.mipt.model.CacheStorage;
 import com.mipt.model.DataType;
-import com.mipt.controller.MemoryCalculator;
-import com.mipt.database.initialization.DatabaseConnection;
 import com.mipt.service.CacheStorageService;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.*;
+import java.util.Base64;
 
 public class CacheEntryDAO {
 
-  /**
-   * Создает таблицу для хранения кэш-записей определенного типа
-   */
   public void createTableForDataType(DataType dataType) throws SQLException {
     String tableName = getTableName(dataType);
 
@@ -38,28 +41,20 @@ public class CacheEntryDAO {
     }
   }
 
-  /**
-   * Создает все необходимые таблицы для всех типов данных
-   */
   public void createAllTables() throws SQLException {
     for (DataType dataType : DataType.values()) {
       createTableForDataType(dataType);
     }
   }
 
-  /**
-   * Сохраняет CacheEntry в БД
-   */
   public void saveCacheEntry(String key, CacheEntry entry) throws SQLException {
     if (entry == null || key == null || key.trim().isEmpty()) {
       throw new IllegalArgumentException("Key и entry не могут быть null/пустыми");
     }
 
     String tableName = getTableName(entry.getDataType());
-
-    // Для H2 используем MERGE вместо ON DUPLICATE KEY UPDATE
     String sql = String.format("""
-        MERGE INTO %s (cache_key, data_value, size_bytes, 
+        MERGE INTO %s (cache_key, data_value, size_bytes,
                       created_by_user, created_at, expires_at)
         KEY(cache_key)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -69,10 +64,7 @@ public class CacheEntryDAO {
         PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
       pstmt.setString(1, key);
-
-      // Сохраняем данные в зависимости от типа
       setDataValue(pstmt, 2, entry.getData(), entry.getDataType());
-
       pstmt.setLong(3, entry.getSizeInBytes());
       pstmt.setString(4, entry.getCreatedByUser());
       pstmt.setTimestamp(5, Timestamp.from(entry.getCreatedAt()));
@@ -87,9 +79,6 @@ public class CacheEntryDAO {
     }
   }
 
-  /**
-   * Удаляет запись по ключу и типу данных
-   */
   public void deleteCacheEntry(String key, DataType dataType) throws SQLException {
     if (key == null || key.trim().isEmpty() || dataType == null) {
       throw new IllegalArgumentException("Key и dataType не могут быть null/пустыми");
@@ -100,16 +89,11 @@ public class CacheEntryDAO {
 
     try (Connection conn = DatabaseConnection.getConnection();
         PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
       pstmt.setString(1, key);
-      int rowsAffected = pstmt.executeUpdate();
-
+      pstmt.executeUpdate();
     }
   }
 
-  /**
-   * Метод для загрузки данных из БД в cacheStorage
-   */
   public void loadEntriesIntoCacheStorage(CacheStorageService cacheService) throws SQLException {
     try {
       var databaseField = CacheStorageService.class.getDeclaredField("database");
@@ -119,7 +103,7 @@ public class CacheEntryDAO {
       for (DataType dataType : DataType.values()) {
         String tableName = getTableName(dataType);
         String sql = String.format("""
-                SELECT cache_key, data_value, size_bytes, 
+                SELECT cache_key, data_value, size_bytes,
                            created_by_user, created_at, expires_at
                 FROM %s WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP
                 """, tableName);
@@ -135,19 +119,14 @@ public class CacheEntryDAO {
             String createdByUser = rs.getString("created_by_user");
             Instant createdAt = rs.getTimestamp("created_at").toInstant();
 
-            // Рассчитываем TTL
             Long ttlSeconds = null;
             Timestamp expiresAtTimestamp = rs.getTimestamp("expires_at");
             if (expiresAtTimestamp != null && !rs.wasNull()) {
               Instant expiresAt = expiresAtTimestamp.toInstant();
-              // Рассчитываем исходный TTL
               ttlSeconds = ChronoUnit.SECONDS.between(createdAt, expiresAt);
             }
 
-            // Создаем CacheEntry
             CacheEntry entry = new CacheEntry(dataType, data, sizeBytes, createdByUser, ttlSeconds);
-
-            // Восстанавливаем запись
             database.restoreEntry(key, entry);
           }
         }
@@ -180,7 +159,6 @@ public class CacheEntryDAO {
         if (data instanceof byte[]) {
           pstmt.setBytes(index, (byte[]) data);
         } else if (data instanceof String) {
-          // Предполагаем, что строка содержит Base64
           pstmt.setBytes(index, Base64.getDecoder().decode((String) data));
         } else {
           throw new SQLException("Неподдерживаемый тип данных для BYTES: " + data.getClass());
