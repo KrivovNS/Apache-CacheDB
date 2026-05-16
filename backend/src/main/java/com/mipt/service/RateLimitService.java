@@ -5,8 +5,11 @@ import com.mipt.model.Session;
 import com.mipt.ratelimit.RateLimitConfig;
 import com.mipt.ratelimit.TokenBucket;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -20,11 +23,11 @@ public class RateLimitService {
 
     private final Map<String, TokenBucket> buckets = new ConcurrentHashMap<>();
 
-    private final RateLimitConfig defaultConfig;
-    private final RateLimitConfig readerConfig;
-    private final RateLimitConfig adminConfig;
-    private final RateLimitConfig superAdminConfig;
-    private final RateLimitConfig unauthenticatedConfig;
+    private RateLimitConfig defaultConfig;
+    private RateLimitConfig readerConfig;
+    private RateLimitConfig adminConfig;
+    private RateLimitConfig superAdminConfig;
+    private RateLimitConfig unauthenticatedConfig;
 
     private final ScheduledExecutorService cleanupScheduler;
     private final SessionService sessionService;
@@ -34,11 +37,10 @@ public class RateLimitService {
         this.sessionService = sessionService;
         this.enabled = enabled;
 
-        this.unauthenticatedConfig = new RateLimitConfig(5);   // 5 req/s
-        this.readerConfig = new RateLimitConfig(50);           // 50 req/s
-        this.adminConfig = new RateLimitConfig(200);           // 200 req/s
-        this.superAdminConfig = new RateLimitConfig(500);      // 500 req/s
-        this.defaultConfig = new RateLimitConfig(100);
+        // Загружаем настройки из application.properties
+        Properties props = loadProperties();
+        loadRateLimitConfigs(props);
+        int cleanupIntervalMinutes = getCleanupInterval(props);
 
         this.cleanupScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "rate-limit-cleanup");
@@ -47,11 +49,81 @@ public class RateLimitService {
         });
 
         cleanupScheduler.scheduleAtFixedRate(
-                this::cleanupExpiredBuckets, 5, 5, TimeUnit.MINUTES);
+                this::cleanupExpiredBuckets, cleanupIntervalMinutes, cleanupIntervalMinutes, TimeUnit.MINUTES);
+
+        log.info("Rate limit cleanup scheduled every {} minutes", cleanupIntervalMinutes);
     }
 
     public RateLimitService(SessionService sessionService) {
         this(sessionService, true);
+    }
+
+    /**
+     * Загружает properties из application.properties
+     */
+    private Properties loadProperties() {
+        Properties props = new Properties();
+        try (InputStream input = getClass().getClassLoader()
+                .getResourceAsStream("application.properties")) {
+            if (input != null) {
+                props.load(input);
+            }
+        } catch (IOException e) {
+            log.warn("Could not load application.properties, using default rate limits");
+        }
+        return props;
+    }
+
+    /**
+     * Загружает настройки rate limit из application.properties
+     */
+    private void loadRateLimitConfigs(Properties props) {
+        int defaultLimit = getIntProperty(props, "ratelimit.default", 100);
+        int unauthenticatedLimit = getIntProperty(props, "ratelimit.unauthenticated", 10);
+        int readerLimit = getIntProperty(props, "ratelimit.reader", 50);
+        int adminLimit = getIntProperty(props, "ratelimit.admin", 200);
+        int superAdminLimit = getIntProperty(props, "ratelimit.superadmin", 500);
+
+        this.defaultConfig = new RateLimitConfig(defaultLimit);
+        this.unauthenticatedConfig = new RateLimitConfig(unauthenticatedLimit);
+        this.readerConfig = new RateLimitConfig(readerLimit);
+        this.adminConfig = new RateLimitConfig(adminLimit);
+        this.superAdminConfig = new RateLimitConfig(superAdminLimit);
+
+        log.info("Rate limit config loaded: default={}, unauthenticated={}, reader={}, admin={}, superadmin={}",
+                defaultLimit, unauthenticatedLimit, readerLimit, adminLimit, superAdminLimit);
+    }
+
+    /**
+     * Получает интервал очистки из properties
+     */
+    private int getCleanupInterval(Properties props) {
+        int defaultInterval = 5; // 5 минут по умолчанию
+        String value = props.getProperty("ratelimit.cleanup");
+        if (value != null) {
+            try {
+                int interval = Integer.parseInt(value);
+                if (interval > 0) {
+                    return interval;
+                }
+                log.warn("ratelimit.cleanup must be positive, using default {}", defaultInterval);
+            } catch (NumberFormatException e) {
+                log.warn("Invalid value for ratelimit.cleanup: {}, using default {}", value, defaultInterval);
+            }
+        }
+        return defaultInterval;
+    }
+
+    private int getIntProperty(Properties props, String key, int defaultValue) {
+        String value = props.getProperty(key);
+        if (value != null) {
+            try {
+                return Integer.parseInt(value);
+            } catch (NumberFormatException e) {
+                log.warn("Invalid value for {}: {}, using default {}", key, value, defaultValue);
+            }
+        }
+        return defaultValue;
     }
 
     public boolean allowRequest(String key) {
@@ -127,8 +199,13 @@ public class RateLimitService {
     }
 
     private void cleanupExpiredBuckets() {
+        int before = buckets.size();
         buckets.entrySet().removeIf(entry ->
                 entry.getValue().getAvailableTokens() == entry.getValue().getConfig().getCapacity()
         );
+        int removed = before - buckets.size();
+        if (removed > 0) {
+            log.debug("Cleaned up {} inactive rate limit buckets", removed);
+        }
     }
 }

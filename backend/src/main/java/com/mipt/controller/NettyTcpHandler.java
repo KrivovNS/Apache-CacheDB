@@ -59,14 +59,17 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, String message) {
         message = message.trim();
-        if (message.isEmpty()) return;
+        if (message.isEmpty()) {
+            return;
+        }
 
         // ============ RATE LIMIT CHECK ============
         String rateLimitKey = getRateLimitKey(ctx);
 
         if ("EXEC".equalsIgnoreCase(message) || "END".equalsIgnoreCase(message)) {
             int batchSize = batchBuffer.size();
-            if (rateLimitService.isEnabled() && !rateLimitService.allowBatchRequest(rateLimitKey, batchSize)) {
+            if (rateLimitService.isEnabled() && !rateLimitService.allowBatchRequest(rateLimitKey,
+                    batchSize)) {
                 writeTcpResponse(ctx, "tcp.ratelimit", false,
                         "ERROR Rate limit exceeded. Please try again later.\n");
                 batchMode = false;
@@ -74,7 +77,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
                 return;
             }
         } else if (!"BEGIN".equalsIgnoreCase(message) && !batchMode) {
-            if (rateLimitService.isEnabled() && !rateLimitService.allowRequest(rateLimitKey, sessionToken)) {
+            if (rateLimitService.isEnabled() && !rateLimitService.allowRequest(rateLimitKey,
+                    sessionToken)) {
                 writeTcpResponse(ctx, "tcp.ratelimit", false,
                         "ERROR Rate limit exceeded. Please try again later.\n");
                 return;
@@ -124,6 +128,9 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
             case "DELETE":
                 handleDelete(ctx, parts, requestType);
                 break;
+            case "SHOW_CONFIG":
+                handleShowConfig(ctx, requestType);
+                break;
             case "CREATE_USER":
                 handleCreateUser(ctx, parts, requestType);
                 break;
@@ -139,14 +146,16 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
             default:
                 writeTcpResponse(ctx, "tcp.unknown", false,
                         "ERROR Unknown command. Available: AUTH, SQL, GET, SET, PUT, DELETE, " +
-                                "CREATE_USER, UPDATE_USER, DELETE_USER, UPDATE_CONFIG, BEGIN, EXEC\n");
+                                "CREATE_USER, UPDATE_USER, DELETE_USER, UPDATE_CONFIG, SHOW_CONFIG, BEGIN, EXEC\n");
         }
     }
 
     // ============ SQL COMMAND ============
 
     private void handleSqlCommand(ChannelHandlerContext ctx, String[] parts, String requestType) {
-        if (!isAuthenticated(ctx, requestType)) return;
+        if (!isAuthenticated(ctx, requestType)) {
+            return;
+        }
 
         if (parts.length < 2) {
             writeTcpResponse(ctx, requestType, false, "ERROR Usage: SQL <sql_query>\n");
@@ -155,7 +164,9 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
 
         StringBuilder sqlBuilder = new StringBuilder();
         for (int i = 1; i < parts.length; i++) {
-            if (i > 1) sqlBuilder.append(" ");
+            if (i > 1) {
+                sqlBuilder.append(" ");
+            }
             sqlBuilder.append(parts[i]);
         }
         String sql = sqlBuilder.toString();
@@ -185,21 +196,24 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
                     break;
                 case INSERT:
                     if (userPermission == PermissionType.READER) {
-                        writeTcpResponse(ctx, requestType, false, "ERROR READER users cannot write\n");
+                        writeTcpResponse(ctx, requestType, false,
+                                "ERROR READER users cannot write\n");
                         return;
                     }
                     handleSqlInsert(ctx, parsed, session, requestType);
                     break;
                 case UPDATE:
                     if (userPermission == PermissionType.READER) {
-                        writeTcpResponse(ctx, requestType, false, "ERROR READER users cannot write\n");
+                        writeTcpResponse(ctx, requestType, false,
+                                "ERROR READER users cannot write\n");
                         return;
                     }
                     handleSqlUpdate(ctx, parsed, session, requestType);
                     break;
                 case DELETE:
                     if (userPermission == PermissionType.READER) {
-                        writeTcpResponse(ctx, requestType, false, "ERROR READER users cannot write\n");
+                        writeTcpResponse(ctx, requestType, false,
+                                "ERROR READER users cannot write\n");
                         return;
                     }
                     handleSqlDelete(ctx, parsed, requestType);
@@ -213,7 +227,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
         }
     }
 
-    private void handleSqlSelect(ChannelHandlerContext ctx, SqlParser.ParsedQuery parsed, String requestType) {
+    private void handleSqlSelect(ChannelHandlerContext ctx, SqlParser.ParsedQuery parsed,
+            String requestType) {
         CacheResult result = cacheService.get(parsed.getKey());
         if (!result.isSuccess()) {
             writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
@@ -224,7 +239,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
         writeTcpResponse(ctx, requestType, true, "OK " + formatted + "\n");
     }
 
-    private void handleSqlInsert(ChannelHandlerContext ctx, SqlParser.ParsedQuery parsed, Session session, String requestType) {
+    private void handleSqlInsert(ChannelHandlerContext ctx, SqlParser.ParsedQuery parsed,
+            Session session, String requestType) {
         String dataType = SqlParser.inferDataType(parsed.getValue());
         DataType dt = DataType.fromString(dataType);
         CacheResult result = cacheService.post(parsed.getKey(), parsed.getValue(), dt,
@@ -236,7 +252,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
         }
     }
 
-    private void handleSqlUpdate(ChannelHandlerContext ctx, SqlParser.ParsedQuery parsed, Session session, String requestType) {
+    private void handleSqlUpdate(ChannelHandlerContext ctx, SqlParser.ParsedQuery parsed,
+            Session session, String requestType) {
         String dataType = SqlParser.inferDataType(parsed.getValue());
         DataType dt = DataType.fromString(dataType);
         CacheResult result = cacheService.put(parsed.getKey(), parsed.getValue(), dt,
@@ -248,7 +265,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
         }
     }
 
-    private void handleSqlDelete(ChannelHandlerContext ctx, SqlParser.ParsedQuery parsed, String requestType) {
+    private void handleSqlDelete(ChannelHandlerContext ctx, SqlParser.ParsedQuery parsed,
+            String requestType) {
         CacheResult result = cacheService.delete(parsed.getKey());
         if (result.isSuccess()) {
             writeTcpResponse(ctx, requestType, true, "OK\n");
@@ -258,6 +276,19 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
     }
 
     // ============ STANDARD COMMANDS ============
+    /**
+     * Отдаёт текущую конфигурацию сервера по TCP
+     */
+    private void handleShowConfig(ChannelHandlerContext ctx, String requestType) {
+        // Проверяем аутентификацию
+        if (!isAuthenticated(ctx, requestType)) return;
+
+        StringBuilder response = new StringBuilder();
+        response.append("persistence=").append(cacheService.isPersistenceEnabled()).append("\n");
+        response.append("max_memory=").append(cacheService.getConfiguredMaxMemoryBytes()).append("\n");
+
+        writeTcpResponse(ctx, requestType, true, response.toString());
+    }
 
     private void handleAuth(ChannelHandlerContext ctx, String[] parts, String requestType) {
         if (parts.length < 3) {
@@ -282,7 +313,9 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
     }
 
     private void handleGet(ChannelHandlerContext ctx, String[] parts, String requestType) {
-        if (!isAuthenticated(ctx, requestType)) return;
+        if (!isAuthenticated(ctx, requestType)) {
+            return;
+        }
         if (parts.length < 2) {
             writeTcpResponse(ctx, requestType, false, "ERROR Usage: GET <key>\n");
             return;
@@ -296,8 +329,12 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
     }
 
     private void handleSet(ChannelHandlerContext ctx, String[] parts, String requestType) {
-        if (!isAuthenticated(ctx, requestType)) return;
-        if (!hasWritePermission(ctx, requestType)) return;
+        if (!isAuthenticated(ctx, requestType)) {
+            return;
+        }
+        if (!hasWritePermission(ctx, requestType)) {
+            return;
+        }
         if (parts.length < 4) {
             writeTcpResponse(ctx, requestType, false,
                     "ERROR Usage: " + parts[0].toUpperCase() + " <key> <type> <value> [ttl]\n");
@@ -312,7 +349,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
         DataType dataType = DataType.fromString(type);
         if (dataType == null) {
             writeTcpResponse(ctx, requestType, false,
-                    "ERROR Invalid type. Valid: " + String.join(", ", DataType.getAllValues()) + "\n");
+                    "ERROR Invalid type. Valid: " + String.join(", ", DataType.getAllValues())
+                            + "\n");
             return;
         }
 
@@ -331,7 +369,9 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
 
             if (result.isSuccess()) {
                 String response = "OK " + result.getMessage();
-                if (ttl != null) response += " (TTL: " + ttl + ")";
+                if (ttl != null) {
+                    response += " (TTL: " + ttl + ")";
+                }
                 writeTcpResponse(ctx, requestType, true, response + "\n");
             } else {
                 writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
@@ -343,8 +383,12 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
     }
 
     private void handleDelete(ChannelHandlerContext ctx, String[] parts, String requestType) {
-        if (!isAuthenticated(ctx, requestType)) return;
-        if (!hasWritePermission(ctx, requestType)) return;
+        if (!isAuthenticated(ctx, requestType)) {
+            return;
+        }
+        if (!hasWritePermission(ctx, requestType)) {
+            return;
+        }
         if (parts.length < 2) {
             writeTcpResponse(ctx, requestType, false, "ERROR Usage: DELETE <key>\n");
             return;
@@ -358,8 +402,12 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
     }
 
     private void handleCreateUser(ChannelHandlerContext ctx, String[] parts, String requestType) {
-        if (!isAuthenticated(ctx, requestType)) return;
-        if (!isSuperAdmin(ctx, requestType)) return;
+        if (!isAuthenticated(ctx, requestType)) {
+            return;
+        }
+        if (!isSuperAdmin(ctx, requestType)) {
+            return;
+        }
         if (parts.length < 4) {
             writeTcpResponse(ctx, requestType, false,
                     "ERROR Usage: CREATE_USER <login> <password> <permission>\n");
@@ -369,7 +417,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
         PermissionType permissionType = PermissionType.fromString(parts[3]);
         if (permissionType == null) {
             writeTcpResponse(ctx, requestType, false,
-                    "ERROR Invalid permission. Valid: " + String.join(", ", PermissionType.getAllValues()) + "\n");
+                    "ERROR Invalid permission. Valid: " + String.join(", ",
+                            PermissionType.getAllValues()) + "\n");
             return;
         }
 
@@ -382,7 +431,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
             User newUser = userDAO.createUser(parts[1], parts[2], permissionType);
             if (newUser != null) {
                 writeTcpResponse(ctx, requestType, true,
-                        "OK User created: " + newUser.getUsername() + " (ID: " + newUser.getId() + ")\n");
+                        "OK User created: " + newUser.getUsername() + " (ID: " + newUser.getId()
+                                + ")\n");
             } else {
                 writeTcpResponse(ctx, requestType, false, "ERROR Failed to create user\n");
             }
@@ -393,8 +443,12 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
     }
 
     private void handleUpdateUser(ChannelHandlerContext ctx, String[] parts, String requestType) {
-        if (!isAuthenticated(ctx, requestType)) return;
-        if (!isSuperAdmin(ctx, requestType)) return;
+        if (!isAuthenticated(ctx, requestType)) {
+            return;
+        }
+        if (!isSuperAdmin(ctx, requestType)) {
+            return;
+        }
         if (parts.length < 5) {
             writeTcpResponse(ctx, requestType, false,
                     "ERROR Usage: UPDATE_USER <login> <newLogin> <password> <permission>\n");
@@ -413,7 +467,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
             PermissionType permissionType = PermissionType.fromString(parts[4]);
             if (permissionType == null) {
                 writeTcpResponse(ctx, requestType, false,
-                        "ERROR Invalid permission. Valid: " + String.join(", ", PermissionType.getAllValues()) + "\n");
+                        "ERROR Invalid permission. Valid: " + String.join(", ",
+                                PermissionType.getAllValues()) + "\n");
                 return;
             }
 
@@ -430,8 +485,12 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
     }
 
     private void handleDeleteUser(ChannelHandlerContext ctx, String[] parts, String requestType) {
-        if (!isAuthenticated(ctx, requestType)) return;
-        if (!isSuperAdmin(ctx, requestType)) return;
+        if (!isAuthenticated(ctx, requestType)) {
+            return;
+        }
+        if (!isSuperAdmin(ctx, requestType)) {
+            return;
+        }
         if (parts.length < 2) {
             writeTcpResponse(ctx, requestType, false, "ERROR Usage: DELETE_USER <login>\n");
             return;
@@ -458,8 +517,12 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
     }
 
     private void handleUpdateConfig(ChannelHandlerContext ctx, String[] parts, String requestType) {
-        if (!isAuthenticated(ctx, requestType)) return;
-        if (!isSuperAdmin(ctx, requestType)) return;
+        if (!isAuthenticated(ctx, requestType)) {
+            return;
+        }
+        if (!isSuperAdmin(ctx, requestType)) {
+            return;
+        }
         if (parts.length < 4) {
             writeTcpResponse(ctx, requestType, false,
                     "ERROR Usage: UPDATE_CONFIG <policy> <maxMemory> <persistence>\n");
@@ -473,7 +536,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
         cmd.setMaxStorageMemory(parts[2]);
         cmd.setPersistence(parts[3]);
 
-        BatchCommandService batchService = new BatchCommandService(cacheService, sessionService, userDAO);
+        BatchCommandService batchService = new BatchCommandService(cacheService, sessionService,
+                userDAO);
         batchService.setSessionToken(sessionToken);
 
         BatchResult result = batchService.executeBatch(List.of(cmd));
@@ -508,10 +572,13 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
             List<BatchCommand> commands = new ArrayList<>();
             for (String cmdStr : batchBuffer) {
                 BatchCommand cmd = parseTcpCommandToBatch(cmdStr);
-                if (cmd != null) commands.add(cmd);
+                if (cmd != null) {
+                    commands.add(cmd);
+                }
             }
 
-            BatchCommandService batchService = new BatchCommandService(cacheService, sessionService, userDAO);
+            BatchCommandService batchService = new BatchCommandService(cacheService, sessionService,
+                    userDAO);
             batchService.setSessionToken(sessionToken);
 
             BatchResult batchResult = batchService.executeBatch(commands);
@@ -542,7 +609,9 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
 
     private BatchCommand parseTcpCommandToBatch(String commandStr) {
         String[] parts = commandStr.split("\\s+", 6);
-        if (parts.length == 0) return null;
+        if (parts.length == 0) {
+            return null;
+        }
 
         BatchCommand cmd = new BatchCommand();
         String command = parts[0].toUpperCase();
@@ -559,7 +628,9 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
             case "GET":
                 cmd.setCommand("GET");
                 cmd.setEndpoint("cache");
-                if (parts.length >= 2) cmd.setKey(parts[1]);
+                if (parts.length >= 2) {
+                    cmd.setKey(parts[1]);
+                }
                 break;
             case "SET":
                 cmd.setCommand("POST");
@@ -569,7 +640,9 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
                     cmd.setType(parts[2]);
                     cmd.setValue(parts[3]);
                 }
-                if (parts.length >= 5) cmd.setTtl(parts[4]);
+                if (parts.length >= 5) {
+                    cmd.setTtl(parts[4]);
+                }
                 break;
             case "PUT":
                 cmd.setCommand("PUT");
@@ -579,12 +652,16 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
                     cmd.setType(parts[2]);
                     cmd.setValue(parts[3]);
                 }
-                if (parts.length >= 5) cmd.setTtl(parts[4]);
+                if (parts.length >= 5) {
+                    cmd.setTtl(parts[4]);
+                }
                 break;
             case "DELETE":
                 cmd.setCommand("DELETE");
                 cmd.setEndpoint("cache");
-                if (parts.length >= 2) cmd.setKey(parts[1]);
+                if (parts.length >= 2) {
+                    cmd.setKey(parts[1]);
+                }
                 break;
             case "CREATE_USER":
                 cmd.setCommand("POST");
@@ -608,7 +685,9 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
             case "DELETE_USER":
                 cmd.setCommand("DELETE");
                 cmd.setEndpoint("user");
-                if (parts.length >= 2) cmd.setLogin(parts[1]);
+                if (parts.length >= 2) {
+                    cmd.setLogin(parts[1]);
+                }
                 break;
             case "UPDATE_CONFIG":
                 cmd.setCommand("PUT");
@@ -642,7 +721,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
 
     private boolean hasWritePermission(ChannelHandlerContext ctx, String requestType) {
         Optional<Session> sessionOpt = sessionService.getValidSession(sessionToken);
-        if (sessionOpt.isPresent() && sessionOpt.get().getPermissionType() == PermissionType.READER) {
+        if (sessionOpt.isPresent()
+                && sessionOpt.get().getPermissionType() == PermissionType.READER) {
             writeTcpResponse(ctx, requestType, false, "ERROR READER users can only GET\n");
             return false;
         }
@@ -651,7 +731,8 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
 
     private boolean isSuperAdmin(ChannelHandlerContext ctx, String requestType) {
         Optional<Session> sessionOpt = sessionService.getValidSession(sessionToken);
-        if (sessionOpt.isPresent() && sessionOpt.get().getPermissionType() != PermissionType.SUPERADMIN) {
+        if (sessionOpt.isPresent()
+                && sessionOpt.get().getPermissionType() != PermissionType.SUPERADMIN) {
             writeTcpResponse(ctx, requestType, false,
                     "ERROR Only SUPERADMIN users can perform this operation\n");
             return false;
@@ -660,21 +741,24 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
     }
 
     private Long parseTtl(String ttlString) {
-        if (ttlString == null || ttlString.trim().isEmpty()) return null;
+        if (ttlString == null || ttlString.trim().isEmpty()) {
+            return null;
+        }
         ttlString = ttlString.trim().toLowerCase();
         try {
-            if (ttlString.endsWith("ms"))
+            if (ttlString.endsWith("ms")) {
                 return Long.parseLong(ttlString.substring(0, ttlString.length() - 2)) / 1000;
-            else if (ttlString.endsWith("s"))
+            } else if (ttlString.endsWith("s")) {
                 return Long.parseLong(ttlString.substring(0, ttlString.length() - 1));
-            else if (ttlString.endsWith("m"))
+            } else if (ttlString.endsWith("m")) {
                 return Long.parseLong(ttlString.substring(0, ttlString.length() - 1)) * 60;
-            else if (ttlString.endsWith("h"))
+            } else if (ttlString.endsWith("h")) {
                 return Long.parseLong(ttlString.substring(0, ttlString.length() - 1)) * 3600;
-            else if (ttlString.endsWith("d"))
+            } else if (ttlString.endsWith("d")) {
                 return Long.parseLong(ttlString.substring(0, ttlString.length() - 1)) * 86400;
-            else
+            } else {
                 return Long.parseLong(ttlString) / 1000;
+            }
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Invalid TTL format: " + ttlString);
         }

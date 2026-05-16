@@ -103,6 +103,11 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
             sendInfoPage(ctx, requestType);
             return;
         }
+        // ============ SHOW CONFIGURATION============
+        if (uri.startsWith("/configuration/show")) {
+            handleShowConfiguration(ctx, requestType);
+            return;
+        }
 
         // ============ RATE LIMIT STATS ============
         if (uri.startsWith("/ratelimit-stats")) {
@@ -848,6 +853,17 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
 
     // ============ HELPER METHODS ============
+    /**
+     * Отдаёт текущую конфигурацию сервера (для драйвера)
+     */
+    private void handleShowConfiguration(ChannelHandlerContext ctx, String requestType) {
+        StringBuilder response = new StringBuilder();
+        response.append("persistence=").append(cacheService.isPersistenceEnabled()).append("\n");
+        response.append("max_memory=").append(cacheService.getConfiguredMaxMemoryBytes()).append("\n");
+
+        FullHttpResponse httpResponse = createResponse(HttpResponseStatus.OK, response.toString());
+        writeHttpResponse(ctx, httpResponse, requestType);
+    }
 
     private String getRateLimitKey(ChannelHandlerContext ctx, String uri) {
         String clientIp = ctx.channel().remoteAddress().toString();
