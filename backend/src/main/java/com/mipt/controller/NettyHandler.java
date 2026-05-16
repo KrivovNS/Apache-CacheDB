@@ -26,6 +26,7 @@ import io.netty.util.CharsetUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.SocketException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -45,6 +46,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     private final TelemetryService telemetryService;
     private final ObjectMapper objectMapper;
     private final RateLimitService rateLimitService;
+    private long currentRequestStartNanos = -1L;
 
     public NettyHandler(CacheStorageService cacheService,
             SessionService sessionService,
@@ -70,6 +72,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest request) throws Exception {
+        currentRequestStartNanos = System.nanoTime();
         String methodStr = request.method().name();
         String uri = request.uri();
         String requestType = resolveHttpRequestType(methodStr, uri);
@@ -1041,17 +1044,46 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     private void writeHttpResponse(ChannelHandlerContext ctx, FullHttpResponse response,
             String requestType) {
-        telemetryService.recordHttpRequest(requestType, response.status().code());
+        long latencyNanos = currentRequestStartNanos > 0
+                ? System.nanoTime() - currentRequestStartNanos
+                : -1L;
+        telemetryService.recordHttpRequest(requestType, response.status().code(), latencyNanos);
+        currentRequestStartNanos = -1L;
         ctx.writeAndFlush(response);
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        if (isClientDisconnect(cause)) {
+            log.debug("Client disconnected during request processing: {}", cause.getMessage());
+            ctx.close();
+            return;
+        }
+
         log.error("Error processing request", cause);
         FullHttpResponse errorResponse = createResponse(
                 HttpResponseStatus.INTERNAL_SERVER_ERROR,
                 "Server error: " + cause.getMessage()
         );
         writeHttpResponse(ctx, errorResponse, "http.exception");
+    }
+
+    private boolean isClientDisconnect(Throwable cause) {
+        Throwable current = cause;
+        while (current != null) {
+            if (current instanceof SocketException) {
+                String message = current.getMessage();
+                if (message != null) {
+                    String normalized = message.toLowerCase(Locale.ROOT);
+                    if (normalized.contains("connection reset")
+                            || normalized.contains("broken pipe")
+                            || normalized.contains("forcibly closed")) {
+                        return true;
+                    }
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }

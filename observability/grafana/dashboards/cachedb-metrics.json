@@ -108,6 +108,53 @@
       ],
       "title": "Requests Success/Failure By Type (last 5m)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, request_type) (rate(cachedb_requests_latency_seconds_bucket{protocol=\"http\"}[5m])))",
+          "legendFormat": "p95 {{request_type}}",
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum by (request_type) (rate(cachedb_requests_latency_seconds_sum{protocol=\"http\"}[5m])) / sum by (request_type) (rate(cachedb_requests_latency_seconds_count{protocol=\"http\"}[5m]))",
+          "legendFormat": "avg {{request_type}}",
+          "refId": "B"
+        }
+      ],
+      "title": "HTTP Latency by Request Type (p95 / avg, 5m)",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",
@@ -129,6 +176,6 @@
   "timezone": "browser",
   "title": "CacheDB Metrics",
   "uid": "cachedb-metrics",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

@@ -18,8 +18,10 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
@@ -35,6 +37,7 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
     private String sessionToken = null;
     private final List<String> batchBuffer = new ArrayList<>();
     private boolean batchMode = false;
+    private long currentCommandStartNanos = -1L;
 
     public NettyTcpHandler(CacheStorageService cacheService,
             SessionService sessionService,
@@ -62,6 +65,7 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
         if (message.isEmpty()) {
             return;
         }
+        currentCommandStartNanos = System.nanoTime();
 
         // ============ RATE LIMIT CHECK ============
         String rateLimitKey = getRateLimitKey(ctx);
@@ -99,6 +103,7 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
 
         if (batchMode) {
             batchBuffer.add(message);
+            currentCommandStartNanos = -1L;
             ctx.writeAndFlush("QUEUED\n");
             return;
         }
@@ -766,13 +771,42 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
 
     private void writeTcpResponse(ChannelHandlerContext ctx, String requestType,
             boolean success, String message) {
-        telemetryService.recordTcpRequest(requestType, success);
+        long latencyNanos = currentCommandStartNanos > 0
+                ? System.nanoTime() - currentCommandStartNanos
+                : -1L;
+        telemetryService.recordTcpRequest(requestType, success, latencyNanos);
+        currentCommandStartNanos = -1L;
         ctx.writeAndFlush(message);
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        if (isClientDisconnect(cause)) {
+            log.debug("TCP client disconnected: {}", cause.getMessage());
+            ctx.close();
+            return;
+        }
+
         log.error("TCP error", cause);
         ctx.close();
+    }
+
+    private boolean isClientDisconnect(Throwable cause) {
+        Throwable current = cause;
+        while (current != null) {
+            if (current instanceof SocketException) {
+                String message = current.getMessage();
+                if (message != null) {
+                    String normalized = message.toLowerCase(Locale.ROOT);
+                    if (normalized.contains("connection reset")
+                            || normalized.contains("broken pipe")
+                            || normalized.contains("forcibly closed")) {
+                        return true;
+                    }
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }
