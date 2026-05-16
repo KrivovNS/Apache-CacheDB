@@ -7,6 +7,7 @@ import com.mipt.server.NettyHttpServer;
 import com.mipt.server.NettyTcpServer;
 import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
+import com.mipt.service.RateLimitService;
 import com.mipt.telemetry.TelemetryService;
 import java.io.InputStream;
 import java.util.Properties;
@@ -17,74 +18,96 @@ import org.slf4j.LoggerFactory;
 
 public class Main {
 
-  private static final Logger log = LoggerFactory.getLogger(Main.class);
+    private static final Logger log = LoggerFactory.getLogger(Main.class);
 
-  public static void main(String[] args) {
-    TelemetryService telemetryService = null;
-    try {
-      Properties properties = loadApplicationProperties();
-      int port = parseHttpPort(properties);
+    public static void main(String[] args) {
+        TelemetryService telemetryService = null;
+        RateLimitService rateLimitService = null;
 
-      log.info("Server starting on port: {}", port);
-      log.info("Initializing database...");
-      DatabaseInitializer.initializeDatabase();
-
-      UserDAO userDAO = new UserDAO();
-      CacheStorageService cacheService = new CacheStorageService();
-      telemetryService = new TelemetryService(properties, cacheService);
-      SessionService sessionService = new SessionService();
-      telemetryService = new TelemetryService(properties, cacheService);
-
-      Executors.newScheduledThreadPool(1).scheduleAtFixedRate(() -> {
-        int removedSessions = sessionService.cleanupExpiredSessions();
-        if (removedSessions > 0) {
-          log.info("Cleanup: {} expired sessions removed", removedSessions);
-        }
-      }, 1, 1, TimeUnit.MINUTES);
-
-      NettyTcpServer tcpServer = new NettyTcpServer(
-          9090, cacheService, sessionService, userDAO, telemetryService
-      );
-      new Thread(() -> {
         try {
-          tcpServer.run();
+            Properties properties = loadApplicationProperties();
+            int port = parseHttpPort(properties);
+
+            log.info("Server starting on port: {}", port);
+            log.info("Initializing database...");
+            DatabaseInitializer.initializeDatabase();
+
+            UserDAO userDAO = new UserDAO();
+            CacheStorageService cacheService = new CacheStorageService();
+            telemetryService = new TelemetryService(properties, cacheService);
+            SessionService sessionService = new SessionService();
+
+            // Создаем RateLimitService (включен по умолчанию)
+            boolean rateLimitEnabled = Boolean.parseBoolean(
+                    properties.getProperty("ratelimit.enabled", "true"));
+            rateLimitService = new RateLimitService(sessionService, rateLimitEnabled);
+
+            log.info("Rate limiting: {}", rateLimitEnabled ? "ENABLED" : "DISABLED");
+
+            // Периодическая очистка просроченных сессий
+            Executors.newScheduledThreadPool(1).scheduleAtFixedRate(() -> {
+                int removedSessions = sessionService.cleanupExpiredSessions();
+                if (removedSessions > 0) {
+                    log.info("Cleanup: {} expired sessions removed", removedSessions);
+                }
+            }, 1, 1, TimeUnit.MINUTES);
+
+            // Запуск TCP сервера в отдельном потоке
+            NettyTcpServer tcpServer = new NettyTcpServer(
+                    9090, cacheService, sessionService, userDAO, telemetryService, rateLimitService
+            );
+            new Thread(() -> {
+                try {
+                    tcpServer.run();
+                } catch (Exception e) {
+                    log.error("TCP server error", e);
+                }
+            }, "tcp-server").start();
+
+            // Запуск HTTP сервера (основной поток)
+            NettyHttpServer httpServer = new NettyHttpServer(
+                    port, cacheService, sessionService, userDAO, telemetryService, rateLimitService
+            );
+            httpServer.run();
+
         } catch (Exception e) {
-          log.error("TCP server error", e);
+            log.error("Failed to start application", e);
+        } finally {
+            // Корректное завершение
+            if (rateLimitService != null) {
+                rateLimitService.shutdown();
+                log.info("Rate limit service shut down");
+            }
+            if (telemetryService != null) {
+                telemetryService.close();
+            }
+            DatabaseConnection.closeConnection();
+            log.info("Application shut down");
         }
-      }, "tcp-server").start();
-
-      NettyHttpServer httpServer = new NettyHttpServer(
-          port, cacheService, sessionService, userDAO, telemetryService
-      );
-      httpServer.run();
-    } catch (Exception e) {
-      log.error("Failed to start application", e);
-    } finally {
-      if (telemetryService != null) {
-        telemetryService.close();
-      }
-      DatabaseConnection.closeConnection();
     }
-  }
 
-  private static Properties loadApplicationProperties() {
-    Properties properties = new Properties();
-    try (InputStream stream = Main.class.getClassLoader().getResourceAsStream("application.properties")) {
-      if (stream != null) {
-        properties.load(stream);
-      }
-    } catch (Exception e) {
-      log.warn("Could not load application.properties, default values will be used");
+    private static Properties loadApplicationProperties() {
+        Properties properties = new Properties();
+        try (InputStream stream = Main.class.getClassLoader()
+                .getResourceAsStream("application.properties")) {
+            if (stream != null) {
+                properties.load(stream);
+                log.info("Loaded application.properties");
+            } else {
+                log.warn("application.properties not found, using defaults");
+            }
+        } catch (Exception e) {
+            log.warn("Could not load application.properties, default values will be used");
+        }
+        return properties;
     }
-    return properties;
-  }
 
-  private static int parseHttpPort(Properties properties) {
-    try {
-      return Integer.parseInt(properties.getProperty("server.port", "8080"));
-    } catch (Exception exception) {
-      log.warn("Could not read server.port from config, using default 8080");
-      return 8080;
+    private static int parseHttpPort(Properties properties) {
+        try {
+            return Integer.parseInt(properties.getProperty("server.port", "8080"));
+        } catch (Exception exception) {
+            log.warn("Could not read server.port from config, using default 8080");
+            return 8080;
+        }
     }
-  }
 }
