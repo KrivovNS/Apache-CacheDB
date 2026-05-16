@@ -4,6 +4,8 @@ import com.mipt.model.PermissionType;
 import com.mipt.database.initialization.DatabaseConnection;
 import com.mipt.model.User;
 import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,6 +67,29 @@ public class UserDAO {
       log.error("Error creating user with username: {}", username, e);
       return null;
     }
+  }
+
+  public List<User> findAllUsers() {
+    String sql = "SELECT id, username, password, permission FROM users ORDER BY id";
+    List<User> users = new ArrayList<>();
+
+    try (Connection conn = DatabaseConnection.getConnection();
+         PreparedStatement stmt = conn.prepareStatement(sql);
+         ResultSet rs = stmt.executeQuery()) {
+
+      while (rs.next()) {
+        User user = new User();
+        user.setId(rs.getLong("id"));
+        user.setUsername(rs.getString("username"));
+        user.setPassword(rs.getString("password"));
+        user.setPermissionType(PermissionType.fromString(rs.getString("permission")));
+        users.add(user);
+      }
+    } catch (SQLException e) {
+      log.error("Error loading users list", e);
+    }
+
+    return users;
   }
 
   /**

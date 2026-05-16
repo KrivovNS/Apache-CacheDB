@@ -54,6 +54,10 @@ public class RequestParametersValidator {
             "session_token", "login"
     );
 
+    private static final Set<String> GET_USER_PARAMS = Set.of(
+            "session_token"
+    );
+
     private static final Set<String> PUT_CONFIG_PARAMS = Set.of(
             "session_token", "max_memory_policy", "max_storage_memory", "persistence"
     );
@@ -200,6 +204,9 @@ public class RequestParametersValidator {
 
         Set<String> allowedParams;
         switch (method.toUpperCase()) {
+            case "GET":
+                allowedParams = GET_USER_PARAMS;
+                break;
             case "PUT":
                 allowedParams = PUT_USER_PARAMS;
                 break;
@@ -211,7 +218,7 @@ public class RequestParametersValidator {
                 break;
             default:
                 result.addError("Invalid method for user endpoint: " + method +
-                        ". Allowed: PUT, POST, DELETE");
+                        ". Allowed: GET, PUT, POST, DELETE");
                 return;
         }
 
@@ -222,6 +229,9 @@ public class RequestParametersValidator {
         }
 
         switch (method.toUpperCase()) {
+            case "GET":
+                validateRequiredParam(result, params, "session_token");
+                break;
             case "POST":
                 validateRequiredParam(result, params, "session_token");
                 validateRequiredParam(result, params, "login");

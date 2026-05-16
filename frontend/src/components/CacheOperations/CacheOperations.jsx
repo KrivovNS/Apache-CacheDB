@@ -326,16 +326,23 @@ const CacheOperations = () => {
                 <>
                   <div className={styles.successBadge}>Success</div>
                   <div className={styles.resultData}>
-                    {typeof result.data === 'string' && dataType === 'json' ? (
-                      <ReactJson
-                        src={formatValue(result.data)}
-                        theme="monokai"
-                        collapsed={false}
-                        displayDataTypes={false}
-                      />
-                    ) : (
-                      <pre>{JSON.stringify(result.data, null, 2)}</pre>
-                    )}
+                    {(() => {
+                      const parsed = formatValue(result.data);
+                      const isJsonObject = parsed !== null && typeof parsed === 'object';
+
+                      if (dataType === 'json' && isJsonObject) {
+                        return (
+                          <ReactJson
+                            src={parsed}
+                            theme="monokai"
+                            collapsed={false}
+                            displayDataTypes={false}
+                          />
+                        );
+                      }
+
+                      return <pre>{JSON.stringify(result.data, null, 2)}</pre>;
+                    })()}
                   </div>
                 </>
               ) : (

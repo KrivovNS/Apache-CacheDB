@@ -4,7 +4,6 @@ import { useAuth } from '../../hooks/useAuth';
 import {
   FiDatabase,
   FiUsers,
-  FiSettings,
   FiTerminal,
   FiLogIn,
   FiLogOut,
@@ -43,16 +42,6 @@ const Sidebar = () => {
             >
               <FiUsers className={styles.icon} />
               <span>User Management</span>
-            </NavLink>
-
-            <NavLink
-              to="/config"
-              className={({ isActive }) =>
-                isActive ? `${styles.navLink} ${styles.active}` : styles.navLink
-              }
-            >
-              <FiSettings className={styles.icon} />
-              <span>Configuration</span>
             </NavLink>
           </>
         )}

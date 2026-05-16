@@ -4,7 +4,6 @@ import { Toaster } from 'react-hot-toast';
 import Layout from './components/Layout/Layout';
 import CacheOperations from './components/CacheOperations/CacheOperations';
 import UserManagement from './components/UserManagement/UserManagement';
-import Configuration from './components/Configuration/Configuration';
 import QueryConsole from './components/QueryConsole/QueryConsole';
 import LoginModal from './components/Common/LoginModal';
 import { AuthProvider, useAuth } from './hooks/useAuth';
@@ -41,7 +40,6 @@ const AppContent = () => {
           <Route index element={<Navigate to="/cache" />} />
           <Route path="cache" element={<CacheOperations />} />
           <Route path="users" element={<UserManagement />} />
-          <Route path="config" element={<Configuration />} />
           <Route path="console" element={<QueryConsole />} />
         </Route>
       </Routes>
