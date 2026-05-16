@@ -17,7 +17,6 @@ export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
 export const ROUTES = {
   CACHE: '/cache',
   USERS: '/users',
-  CONFIG: '/config',
   CONSOLE: '/console'
 };
 

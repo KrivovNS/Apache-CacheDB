@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useNotification } from '../../hooks/useNotification';
 import { FiUserPlus, FiUserMinus, FiEdit2, FiSave, FiX, FiKey, FiShield } from 'react-icons/fi';
@@ -6,26 +6,12 @@ import styles from './UserManagement.module.css';
 import api from '../../services/api';
 
 const PERMISSIONS = ['reader', 'admin', 'superadmin'];
-const STORAGE_KEY = 'cacheDbUsers';
-const DEFAULT_USERS = [
-  { id: 1, login: 'default', permission: 'superadmin' }
-];
 
 const UserManagement = () => {
   const { user, isAuthenticated, isSuperAdmin, logout } = useAuth();
   const { showSuccess, showError } = useNotification();
 
-  const [users, setUsers] = useState(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch {
-      // ignore parse errors and fall back to defaults
-    }
-    return DEFAULT_USERS;
-  });
+  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
@@ -34,6 +20,42 @@ const UserManagement = () => {
     password: '',
     permission: 'reader'
   });
+
+  const parseUsers = useCallback((payload) => {
+    try {
+      const rawUsers = typeof payload === 'string' ? JSON.parse(payload) : payload;
+      if (!Array.isArray(rawUsers)) {
+        return [];
+      }
+
+      return rawUsers.map((entry) => ({
+        id: entry.id,
+        login: entry.login || entry.username,
+        permission: entry.permission
+      }));
+    } catch (error) {
+      console.error('Failed to parse users payload:', error);
+      return [];
+    }
+  }, []);
+
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await api.getUsers();
+      setUsers(parseUsers(response.data));
+    } catch (error) {
+      showError(error.message || 'Failed to load users');
+    } finally {
+      setLoading(false);
+    }
+  }, [parseUsers, showError]);
+
+  useEffect(() => {
+    if (isAuthenticated && isSuperAdmin) {
+      loadUsers();
+    }
+  }, [isAuthenticated, isSuperAdmin, loadUsers]);
 
   const handleCreateUser = async (e) => {
     e.preventDefault();
@@ -60,9 +82,8 @@ const UserManagement = () => {
         permission: formData.permission
       };
 
-      const updatedUsers = [...users, newUser];
-      setUsers(updatedUsers);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedUsers));
+      setUsers(prev => [...prev, newUser]);
+      await loadUsers();
       showSuccess('User created successfully');
       setShowCreateForm(false);
       setFormData({ login: '', password: '', permission: 'reader' });
@@ -95,7 +116,7 @@ const UserManagement = () => {
       const updatedLogin = updates.new_login || editingUser.login;
       const updatedPermission = updates.permission || editingUser.permission;
 
-      const updatedUsers = users.map(u =>
+      setUsers(prev => prev.map((u) =>
         u.id === editingUser.id
           ? {
               ...u,
@@ -103,10 +124,8 @@ const UserManagement = () => {
               permission: updatedPermission
             }
           : u
-      );
-
-      setUsers(updatedUsers);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedUsers));
+      ));
+      await loadUsers();
 
       const isEditingSelf = user && editingUser && editingUser.login === user.username;
 
@@ -136,9 +155,8 @@ const UserManagement = () => {
     setLoading(true);
     try {
       await api.deleteUser(login);
-      const updatedUsers = users.filter(u => u.login !== login);
-      setUsers(updatedUsers);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedUsers));
+      setUsers(prev => prev.filter(u => u.login !== login));
+      await loadUsers();
       showSuccess('User deleted successfully');
     } catch (error) {
       showError(error.message || 'Failed to delete user');

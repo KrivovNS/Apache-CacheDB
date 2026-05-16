@@ -29,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import java.net.SocketException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -690,7 +691,9 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
                 return;
             }
 
-            if (method.isPut()) {
+            if (method.isGet()) {
+                response = handleGetUsers();
+            } else if (method.isPut()) {
                 response = handleUpdateUser(params);
             } else if (method.isPost()) {
                 response = handleCreateUser(params);
@@ -698,7 +701,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
                 response = handleDeleteUser(params);
             } else {
                 response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED,
-                        "Method " + method.getMethod() + " not allowed for /user endpoint");
+                        "Method " + method.getMethod() + " not allowed for /user endpoint. Use GET, POST, PUT or DELETE");
             }
         } catch (Exception e) {
             log.error("Error processing user request", e);
@@ -707,6 +710,30 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         }
 
         writeHttpResponse(ctx, response, requestType);
+    }
+
+    private FullHttpResponse handleGetUsers() {
+        try {
+            List<User> users = userDAO.findAllUsers();
+            List<Map<String, Object>> responseUsers = new ArrayList<>();
+
+            for (User user : users) {
+                Map<String, Object> entry = new HashMap<>();
+                entry.put("id", user.getId());
+                entry.put("login", user.getUsername());
+                entry.put("permission", user.getPermissionType() != null
+                        ? user.getPermissionType().getValue()
+                        : null);
+                responseUsers.add(entry);
+            }
+
+            String json = objectMapper.writeValueAsString(responseUsers);
+            return createResponse(HttpResponseStatus.OK, json, "application/json; charset=UTF-8");
+        } catch (Exception e) {
+            log.error("Error loading users list", e);
+            return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+                    "Error loading users list: " + e.getMessage());
+        }
     }
 
     private FullHttpResponse handleCreateUser(Map<String, String> params) {
@@ -945,6 +972,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
                 "PIPELINE:\n" +
                 "POST   /pipeline (JSON array of commands)\n\n" +
                 "USER MANAGEMENT (SUPERADMIN only):\n" +
+                "GET    /user?session_token=TOKEN\n" +
                 "POST   /user?session_token=TOKEN&login=LOGIN&password=PASSWORD&permission=PERMISSION\n" +
                 "PUT    /user?session_token=TOKEN&login=LOGIN&[new_login=LOGIN]&[password=PASSWORD]&[permission=PERMISSION]\n" +
                 "DELETE /user?session_token=TOKEN&login=LOGIN\n\n" +
