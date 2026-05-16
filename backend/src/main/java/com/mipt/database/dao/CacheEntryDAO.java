@@ -16,8 +16,14 @@ import java.sql.Types;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CacheEntryDAO {
+
+  private static final Logger log = LoggerFactory.getLogger(CacheEntryDAO.class);
+  private static final int MAX_RETRY_ATTEMPTS = 3;
+  private static final long RETRY_BACKOFF_MS = 25L;
 
   public void createTableForDataType(DataType dataType) throws SQLException {
     String tableName = getTableName(dataType);
@@ -60,23 +66,25 @@ public class CacheEntryDAO {
         VALUES (?, ?, ?, ?, ?, ?)
         """, tableName);
 
-    try (Connection conn = DatabaseConnection.getConnection();
-        PreparedStatement pstmt = conn.prepareStatement(sql)) {
+    executeWithRetry(() -> {
+      try (Connection conn = DatabaseConnection.getConnection();
+          PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-      pstmt.setString(1, key);
-      setDataValue(pstmt, 2, entry.getData(), entry.getDataType());
-      pstmt.setLong(3, entry.getSizeInBytes());
-      pstmt.setString(4, entry.getCreatedByUser());
-      pstmt.setTimestamp(5, Timestamp.from(entry.getCreatedAt()));
+        pstmt.setString(1, key);
+        setDataValue(pstmt, 2, entry.getData(), entry.getDataType());
+        pstmt.setLong(3, entry.getSizeInBytes());
+        pstmt.setString(4, entry.getCreatedByUser());
+        pstmt.setTimestamp(5, Timestamp.from(entry.getCreatedAt()));
 
-      if (entry.getExpiresAt() != null) {
-        pstmt.setTimestamp(6, Timestamp.from(entry.getExpiresAt()));
-      } else {
-        pstmt.setNull(6, Types.TIMESTAMP);
+        if (entry.getExpiresAt() != null) {
+          pstmt.setTimestamp(6, Timestamp.from(entry.getExpiresAt()));
+        } else {
+          pstmt.setNull(6, Types.TIMESTAMP);
+        }
+
+        pstmt.executeUpdate();
       }
-
-      pstmt.executeUpdate();
-    }
+    }, "saveCacheEntry");
   }
 
   public void deleteCacheEntry(String key, DataType dataType) throws SQLException {
@@ -87,11 +95,13 @@ public class CacheEntryDAO {
     String tableName = getTableName(dataType);
     String sql = String.format("DELETE FROM %s WHERE cache_key = ?", tableName);
 
-    try (Connection conn = DatabaseConnection.getConnection();
-        PreparedStatement pstmt = conn.prepareStatement(sql)) {
-      pstmt.setString(1, key);
-      pstmt.executeUpdate();
-    }
+    executeWithRetry(() -> {
+      try (Connection conn = DatabaseConnection.getConnection();
+          PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        pstmt.setString(1, key);
+        pstmt.executeUpdate();
+      }
+    }, "deleteCacheEntry");
   }
 
   public void loadEntriesIntoCacheStorage(CacheStorageService cacheService) throws SQLException {
@@ -172,5 +182,57 @@ public class CacheEntryDAO {
       case JSON, STRING -> rs.getString("data_value");
       case BYTES -> rs.getBytes("data_value");
     };
+  }
+
+  private void executeWithRetry(SqlOperation operation, String operationName) throws SQLException {
+    SQLException lastException = null;
+
+    for (int attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+      try {
+        operation.run();
+        return;
+      } catch (SQLException e) {
+        lastException = e;
+        if (!isTransientSqlError(e) || attempt == MAX_RETRY_ATTEMPTS) {
+          throw e;
+        }
+
+        log.warn("Transient SQL error during {} (attempt {}/{}): {}",
+            operationName, attempt, MAX_RETRY_ATTEMPTS, e.getMessage());
+
+        try {
+          Thread.sleep(RETRY_BACKOFF_MS * attempt);
+        } catch (InterruptedException interruptedException) {
+          Thread.currentThread().interrupt();
+          throw new SQLException("Interrupted during retry backoff", interruptedException);
+        }
+      }
+    }
+
+    throw lastException;
+  }
+
+  private boolean isTransientSqlError(SQLException e) {
+    String sqlState = e.getSQLState();
+    if (sqlState != null && (sqlState.startsWith("40") || sqlState.startsWith("08"))) {
+      return true;
+    }
+
+    String message = e.getMessage();
+    if (message == null) {
+      return false;
+    }
+
+    String normalized = message.toLowerCase();
+    return normalized.contains("lock")
+        || normalized.contains("deadlock")
+        || normalized.contains("timeout")
+        || normalized.contains("concurrent")
+        || normalized.contains("closed");
+  }
+
+  @FunctionalInterface
+  private interface SqlOperation {
+    void run() throws SQLException;
   }
 }
