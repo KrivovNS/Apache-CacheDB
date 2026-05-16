@@ -83,12 +83,13 @@ public class CacheStorage {
                 return CacheResult.error("Data processing error: " + e.getMessage());
             }
 
-            long entrySizeBytes;
+            StoredPayload payloadForMemory;
             try {
-                entrySizeBytes = MemoryCalculator.calculateEntrySizeBytes(key, dataType, processedValue);
+                payloadForMemory = preparePayloadForMemory(key, processedValue, dataType);
             } catch (IllegalArgumentException e) {
-                return CacheResult.error("Size calculation error: " + e.getMessage());
+                return CacheResult.error("Compression error: " + e.getMessage());
             }
+            long entrySizeBytes = payloadForMemory.sizeBytes();
 
         if (entrySizeBytes > maxMemoryBytes) {
           return CacheResult.error("Data exceeding the memory limit");
@@ -154,7 +155,9 @@ public class CacheStorage {
                     }
                 }
 
-                CacheEntry entry = new CacheEntry(dataType, processedValue, entrySizeBytes, user, ttlSeconds);
+                CacheEntry entry = new CacheEntry(
+                    dataType, payloadForMemory.payload(), entrySizeBytes, user, ttlSeconds
+                );
                 mainCache.put(key, entry);
                 memoryUsed.addAndGet(entrySizeBytes);
 
