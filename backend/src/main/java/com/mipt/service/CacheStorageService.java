@@ -71,23 +71,11 @@ public class CacheStorageService {
     return CacheResult.error("The key already exists");
   }
 
-  // Kept for backward compatibility; sizeBytes is ignored.
-  public CacheResult post(String key, Object value, DataType dataType,
-      String user, Long ttlSeconds, long sizeBytes) {
-    return post(key, value, dataType, user, ttlSeconds);
-  }
-
   public CacheResult put(String key, Object value, DataType dataType, String user, Long ttlSeconds) {
     if (database.containsKey(key)) {
       return database.set(key, value, dataType, user, ttlSeconds, HttpMethod.PUT);
     }
     return CacheResult.error("The key not exists");
-  }
-
-  // Kept for backward compatibility; sizeBytes is ignored.
-  public CacheResult put(String key, Object value, DataType dataType,
-      String user, Long ttlSeconds, long sizeBytes) {
-    return put(key, value, dataType, user, ttlSeconds);
   }
 
   public CacheResult get(String key) {

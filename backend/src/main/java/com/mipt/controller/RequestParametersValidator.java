@@ -18,19 +18,19 @@ public class RequestParametersValidator {
 
   // Допустимые параметры для каждого endpoint
   private static final Set<String> GET_CACHE_PARAMS = Set.of(
-      "session_token", "key"
+      "session_token", "key", "cmd", "start", "stop", "field"
   );
 
   private static final Set<String> POST_CACHE_PARAMS = Set.of(
-      "session_token", "key", "type", "ttl"
+      "session_token", "key", "type", "ttl", "cmd", "value", "field", "increment"
   );
 
   private static final Set<String> PUT_CACHE_PARAMS = Set.of(
-      "session_token", "key", "type", "ttl"
+      "session_token", "key", "type", "ttl", "cmd", "value", "field", "increment"
   );
 
   private static final Set<String> DELETE_CACHE_PARAMS = Set.of(
-      "session_token", "key"
+      "session_token", "key", "cmd", "field"
   );
 
   private static final Set<String> GET_AUTH_PARAMS = Set.of(
@@ -101,7 +101,10 @@ public class RequestParametersValidator {
       case "PUT":
         validateRequiredParam(result, params, "session_token");
         validateRequiredParam(result, params, "key");
-        validateRequiredParam(result, params, "type");
+        // type обязателен только если нет cmd
+        if (!params.containsKey("cmd")) {
+          validateRequiredParam(result, params, "type");
+        }
         break;
       case "DELETE":
         validateRequiredParam(result, params, "session_token");
@@ -116,8 +119,8 @@ public class RequestParametersValidator {
       return;
     }
 
-    // Проверка типа данных для POST/PUT
-    if (params.containsKey("type")) {
+    // Проверка типа данных для POST/PUT (только если нет cmd)
+    if (params.containsKey("type") && !params.containsKey("cmd")) {
       String type = getFirstParam(params, "type");
       if (!DataType.isValid(type)) {
         result.addError(
@@ -417,9 +420,9 @@ public class RequestParametersValidator {
   }
 
   private void validateNoExtraParams(ValidationResult result,
-      Map<String, List<String>> params,
-      Set<String> allowedParams,
-      String endpointName) {
+                                     Map<String, List<String>> params,
+                                     Set<String> allowedParams,
+                                     String endpointName) {
     for (String paramName : params.keySet()) {
       if (!allowedParams.contains(paramName)) {
         result.addError("Unexpected parameter '" + paramName + "' for " + endpointName +
@@ -429,8 +432,8 @@ public class RequestParametersValidator {
   }
 
   private void validateSingleValueParams(ValidationResult result,
-      Map<String, List<String>> params,
-      Set<String> paramNames) {
+                                         Map<String, List<String>> params,
+                                         Set<String> paramNames) {
     for (String paramName : paramNames) {
       if (params.containsKey(paramName)) {
         List<String> values = params.get(paramName);
@@ -448,7 +451,7 @@ public class RequestParametersValidator {
   }
 
   private void validateStringLength(ValidationResult result, String value, String fieldName,
-      int min, int max) {
+                                    int min, int max) {
     if (value == null) {
       return;
     }
@@ -463,7 +466,7 @@ public class RequestParametersValidator {
   }
 
   private void validateRequiredParam(ValidationResult result, Map<String, List<String>> params,
-      String paramName) {
+                                     String paramName) {
     String value = getFirstParam(params, paramName);
     if (value == null || value.trim().isEmpty()) {
       result.addError("Parameter '" + paramName + "' is required and cannot be empty");

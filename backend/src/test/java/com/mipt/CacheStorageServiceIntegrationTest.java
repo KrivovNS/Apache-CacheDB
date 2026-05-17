@@ -24,8 +24,7 @@ public class CacheStorageServiceIntegrationTest {
         "testValue",
         DataType.STRING,
         "testUser",
-        null,
-        100L
+        null
     );
 
     assertTrue(postResult.isSuccess());
@@ -43,10 +42,10 @@ public class CacheStorageServiceIntegrationTest {
         false
     );
 
-    service.post("key", "value1", DataType.STRING, "user", null, 100L);
+    service.post("key", "value1", DataType.STRING, "user", null);
 
     CacheResult duplicateResult = service.post(
-        "key", "value2", DataType.STRING, "user", null, 100L
+        "key", "value2", DataType.STRING, "user", null
     );
 
     assertFalse(duplicateResult.isSuccess());
@@ -66,8 +65,7 @@ public class CacheStorageServiceIntegrationTest {
         "value",
         DataType.STRING,
         "user",
-        null,
-        100L
+        null
     );
 
     assertFalse(putResult.isSuccess());
@@ -84,21 +82,21 @@ public class CacheStorageServiceIntegrationTest {
 
     // POST
     CacheResult postResult = service.post(
-        "key", "initial", DataType.STRING, "user", null, 100L
+        "key", "initial", DataType.STRING, "user", null
     );
     assertTrue(postResult.isSuccess());
     assertEquals("initial", service.get("key").getData());
 
     // PUT
     CacheResult putResult = service.put(
-        "key", "updated", DataType.STRING, "user", null, 150L
+        "key", "updated", DataType.STRING, "user", null
     );
     assertTrue(putResult.isSuccess());
     assertEquals("updated", service.get("key").getData());
 
     // PUT с TTL
     CacheResult putWithTTL = service.put(
-        "key", "withTTL", DataType.STRING, "user", 5L, 120L
+        "key", "withTTL", DataType.STRING, "user", 5L
     );
     assertTrue(putWithTTL.isSuccess());
 

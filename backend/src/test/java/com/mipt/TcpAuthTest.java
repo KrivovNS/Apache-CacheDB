@@ -6,6 +6,7 @@ import com.mipt.database.initialization.DatabaseConnection;
 import com.mipt.database.initialization.DatabaseInitializer;
 import com.mipt.service.CacheStorageService;
 import com.mipt.service.SessionService;
+import com.mipt.telemetry.TelemetryService;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.*;
 
@@ -35,16 +36,12 @@ class TcpAuthTest {
         System.setProperty("db.url", "jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1");
         DatabaseInitializer.initializeDatabase();
 
-        // Добавляем тестового пользователя
         try (Connection conn = DatabaseConnection.getConnection();
              Statement stmt = conn.createStatement()) {
 
-            // СНАЧАЛА удаляем старого пользователя, если он есть
             stmt.execute("DELETE FROM users WHERE username = 'testuser'");
-
-            // ПОТОМ создаем нового
             stmt.execute("INSERT INTO users (username, password, permission) VALUES " +
-                    "('testuser', 'testpass', 'admin')");
+                "('testuser', 'testpass', 'admin')");
 
             System.out.println("Test user created");
         }
@@ -56,7 +53,7 @@ class TcpAuthTest {
         sessionService = new SessionService();
         userDAO = new UserDAO();
 
-        NettyTcpHandler handler = new NettyTcpHandler(cacheService, sessionService, userDAO);
+        NettyTcpHandler handler = new NettyTcpHandler(cacheService, sessionService, userDAO, TelemetryService.disabled(cacheService));
         channel = new EmbeddedChannel(handler);
     }
 
@@ -72,7 +69,6 @@ class TcpAuthTest {
 
     private String readResponse() {
         String response = channel.readOutbound();
-        // Убираем перенос строки для сравнения
         return response != null ? response.replace("\n", "") : null;
     }
 
@@ -146,7 +142,6 @@ class TcpAuthTest {
         String response = readResponse();
 
         assertNotNull(response);
-        // Проверяем что начинается с OK (не ошибка)
         assertTrue(response.startsWith("OK"), "Response should start with OK, but was: " + response);
         System.out.println("Response: " + response);
         System.out.println("✓ Extra spaces handled correctly");

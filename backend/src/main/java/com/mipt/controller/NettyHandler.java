@@ -24,7 +24,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
@@ -36,21 +39,19 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   private final RequestParametersValidator validator;
   private final TelemetryService telemetryService;
 
+  // Хранилища для структур данных
+  private final Map<String, List<String>> listStorage = new ConcurrentHashMap<>();
+  private final Map<String, Map<String, String>> hashStorage = new ConcurrentHashMap<>();
+
   public NettyHandler(CacheStorageService cacheService,
-      SessionService sessionService,
-      UserDAO userDAO,
-      TelemetryService telemetryService) {
+                      SessionService sessionService,
+                      UserDAO userDAO,
+                      TelemetryService telemetryService) {
     this.cacheService = cacheService;
     this.sessionService = sessionService;
     this.userDAO = userDAO;
     this.validator = new RequestParametersValidator();
     this.telemetryService = telemetryService;
-  }
-
-  public NettyHandler(CacheStorageService cacheService,
-      SessionService sessionService,
-      UserDAO userDAO) {
-    this(cacheService, sessionService, userDAO, TelemetryService.disabled(cacheService));
   }
 
   @Override
@@ -79,14 +80,12 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       return;
     }
 
-    // Конвертируем строку в enum
     HttpMethod method = HttpMethod.fromString(methodStr);
     if (method == null) {
       sendBadRequest(ctx, "Invalid HTTP method: " + methodStr, requestType);
       return;
     }
 
-    // Обработка запросов к кэшу
     if (uri.startsWith("/cache")) {
       handleCacheRequest(ctx, method, uri, content, requestType);
       return;
@@ -111,30 +110,27 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   }
 
   private void handleCacheRequest(ChannelHandlerContext ctx, HttpMethod method, String uri,
-      String content, String requestType) {
+                                  String content, String requestType) {
     Map<String, String> params = parseUri(uri);
     String sessionToken = params.get("session_token");
     String key = params.get("key");
+    String cmd = params.get("cmd");
 
     FullHttpResponse response;
 
     try {
-      // Проверяем валидность сессии
       if (!isSessionValid(sessionToken)) {
         response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
         writeHttpResponse(ctx, response, requestType);
         return;
       }
 
-      // Проверяем обязательные параметры
-      if (sessionToken == null || key == null) {
-        response = createResponse(HttpResponseStatus.BAD_REQUEST,
-            "Missing required parameters: session_token and key");
+      if (sessionToken == null) {
+        response = createResponse(HttpResponseStatus.BAD_REQUEST, "Missing required parameter: session_token");
         writeHttpResponse(ctx, response, requestType);
         return;
       }
 
-      // Получаем сессию для проверки прав доступа
       Optional<Session> sessionOpt = sessionService.getValidSession(sessionToken);
       if (sessionOpt.isEmpty()) {
         response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
@@ -145,21 +141,32 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       Session session = sessionOpt.get();
       PermissionType userPermission = session.getPermissionType();
 
-      // Обработка в зависимости от метода
+      // Обработка команд для структур данных (LIST, HASH)
+      if (cmd != null && !cmd.isEmpty()) {
+        response = handleDataStructureCommand(method, sessionToken, key, cmd, params, content, userPermission);
+        writeHttpResponse(ctx, response, requestType);
+        return;
+      }
+
+      // Обычные кэш-операции
+      if (key == null) {
+        response = createResponse(HttpResponseStatus.BAD_REQUEST, "Missing required parameter: key");
+        writeHttpResponse(ctx, response, requestType);
+        return;
+      }
+
       if (method.isGet()) {
         response = handleCacheGet(key);
-      } else if (method.isWriteMethod()) { // POST или PUT
+      } else if (method.isWriteMethod()) {
         if (userPermission == PermissionType.READER) {
-          response = createResponse(HttpResponseStatus.FORBIDDEN,
-              "READER users can only get data");
+          response = createResponse(HttpResponseStatus.FORBIDDEN, "READER users can only get data");
           writeHttpResponse(ctx, response, requestType);
           return;
         }
         response = handleCacheWrite(method, sessionToken, key, params, content);
       } else if (method.isDelete()) {
         if (userPermission == PermissionType.READER) {
-          response = createResponse(HttpResponseStatus.FORBIDDEN,
-              "READER users can only get data");
+          response = createResponse(HttpResponseStatus.FORBIDDEN, "READER users can only get data");
           writeHttpResponse(ctx, response, requestType);
           return;
         }
@@ -177,8 +184,252 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     writeHttpResponse(ctx, response, requestType);
   }
 
+  /**
+   * Обрабатывает команды для структур данных (LIST, HASH)
+   */
+  private FullHttpResponse handleDataStructureCommand(HttpMethod method, String sessionToken,
+                                                      String key, String cmd, Map<String, String> params, String content, PermissionType userPermission) {
+
+    // Команды чтения
+    boolean isReadCommand = cmd.equalsIgnoreCase("lrange") || cmd.equalsIgnoreCase("llen") ||
+        cmd.equalsIgnoreCase("lpop") || cmd.equalsIgnoreCase("rpop") ||
+        cmd.equalsIgnoreCase("hget") || cmd.equalsIgnoreCase("hgetall");
+
+    // Команды записи
+    boolean isWriteCommand = cmd.equalsIgnoreCase("lpush") || cmd.equalsIgnoreCase("rpush") ||
+        cmd.equalsIgnoreCase("hset") || cmd.equalsIgnoreCase("hdel") || cmd.equalsIgnoreCase("hincrby");
+
+    if (isWriteCommand && userPermission == PermissionType.READER) {
+      return createResponse(HttpResponseStatus.FORBIDDEN, "READER users cannot modify data");
+    }
+
+    if (key == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "key parameter is required");
+    }
+
+    try {
+      switch (cmd.toLowerCase()) {
+        // ========== LIST Operations ==========
+        case "lpush":
+          return handleListPush(key, params, content, true);
+        case "rpush":
+          return handleListPush(key, params, content, false);
+        case "lpop":
+          return handleListPop(key, true);
+        case "rpop":
+          return handleListPop(key, false);
+        case "lrange":
+          return handleListRange(key, params);
+        case "llen":
+          return handleListLen(key);
+
+        // ========== HASH Operations ==========
+        case "hset":
+          return handleHashSet(key, params);
+        case "hget":
+          return handleHashGet(key, params);
+        case "hdel":
+          return handleHashDel(key, params);
+        case "hgetall":
+          return handleHashGetAll(key);
+        case "hincrby":
+          return handleHashIncrBy(key, params);
+
+        default:
+          return createResponse(HttpResponseStatus.BAD_REQUEST, "Unknown command: " + cmd);
+      }
+    } catch (Exception e) {
+      log.error("Error executing command: {}", cmd, e);
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Command error: " + e.getMessage());
+    }
+  }
+
+  // ==================== LIST Implementation ====================
+
+  private FullHttpResponse handleListPush(String key, Map<String, String> params, String content, boolean left) {
+    String value = params.get("value");
+    if (value == null && content != null && !content.isEmpty()) {
+      value = content;
+    }
+    if (value == null || value.trim().isEmpty()) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "Value is required for " + (left ? "LPUSH" : "RPUSH"));
+    }
+
+    try {
+      List<String> list = listStorage.computeIfAbsent(key, k -> new ArrayList<>());
+      if (left) {
+        list.add(0, value);
+      } else {
+        list.add(value);
+      }
+      return createResponse(HttpResponseStatus.OK, "OK");
+    } catch (Exception e) {
+      return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "List push error: " + e.getMessage());
+    }
+  }
+
+  private FullHttpResponse handleListPop(String key, boolean left) {
+    List<String> list = listStorage.get(key);
+    if (list == null || list.isEmpty()) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Key not found or not a list");
+    }
+
+    String value = left ? list.remove(0) : list.remove(list.size() - 1);
+
+    if (list.isEmpty()) {
+      listStorage.remove(key);
+    }
+
+    return createResponse(HttpResponseStatus.OK, value);
+  }
+
+  private FullHttpResponse handleListRange(String key, Map<String, String> params) {
+    String startStr = params.get("start");
+    String stopStr = params.get("stop");
+
+    if (startStr == null || stopStr == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "start and stop parameters are required for LRANGE");
+    }
+
+    List<String> list = listStorage.get(key);
+    if (list == null || list.isEmpty()) {
+      return createResponse(HttpResponseStatus.OK, "[]");
+    }
+
+    try {
+      int start = Integer.parseInt(startStr);
+      int stop = Integer.parseInt(stopStr);
+      int size = list.size();
+
+      int from = start >= 0 ? start : Math.max(0, size + start);
+      int to = stop >= 0 ? Math.min(size - 1, stop) : size + stop;
+
+      if (from > to || from >= size) {
+        return createResponse(HttpResponseStatus.OK, "[]");
+      }
+
+      List<String> result = list.subList(from, to + 1);
+      return createResponse(HttpResponseStatus.OK, result.toString());
+    } catch (NumberFormatException e) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "start and stop must be integers");
+    }
+  }
+
+  private FullHttpResponse handleListLen(String key) {
+    List<String> list = listStorage.get(key);
+    if (list == null) {
+      return createResponse(HttpResponseStatus.OK, "0");
+    }
+    return createResponse(HttpResponseStatus.OK, String.valueOf(list.size()));
+  }
+
+  // ==================== HASH Implementation ====================
+
+  private FullHttpResponse handleHashSet(String key, Map<String, String> params) {
+    String field = params.get("field");
+    String value = params.get("value");
+
+    if (field == null || value == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "field and value parameters are required for HSET");
+    }
+
+    Map<String, String> hash = hashStorage.computeIfAbsent(key, k -> new HashMap<>());
+    hash.put(field, value);
+    return createResponse(HttpResponseStatus.OK, "OK");
+  }
+
+  private FullHttpResponse handleHashGet(String key, Map<String, String> params) {
+    String field = params.get("field");
+    if (field == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "field parameter is required for HGET");
+    }
+
+    Map<String, String> hash = hashStorage.get(key);
+    if (hash == null) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Key not found");
+    }
+
+    String value = hash.get(field);
+    if (value == null) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Field not found");
+    }
+
+    return createResponse(HttpResponseStatus.OK, value);
+  }
+
+  private FullHttpResponse handleHashDel(String key, Map<String, String> params) {
+    String field = params.get("field");
+    if (field == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "field parameter is required for HDEL");
+    }
+
+    Map<String, String> hash = hashStorage.get(key);
+    if (hash == null) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Key not found");
+    }
+
+    String removed = hash.remove(field);
+    if (removed == null) {
+      return createResponse(HttpResponseStatus.NOT_FOUND, "Field not found");
+    }
+
+    if (hash.isEmpty()) {
+      hashStorage.remove(key);
+    }
+
+    return createResponse(HttpResponseStatus.OK, "OK");
+  }
+
+  private FullHttpResponse handleHashGetAll(String key) {
+    Map<String, String> hash = hashStorage.get(key);
+    if (hash == null || hash.isEmpty()) {
+      return createResponse(HttpResponseStatus.OK, "{}");
+    }
+    return createResponse(HttpResponseStatus.OK, hash.toString());
+  }
+
+  private FullHttpResponse handleHashIncrBy(String key, Map<String, String> params) {
+    String field = params.get("field");
+    String incrementStr = params.get("increment");
+
+    if (field == null || incrementStr == null) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "field and increment parameters are required for HINCRBY");
+    }
+
+    try {
+      long increment = Long.parseLong(incrementStr);
+      Map<String, String> hash = hashStorage.computeIfAbsent(key, k -> new HashMap<>());
+
+      String currentStr = hash.get(field);
+      long current = 0;
+      if (currentStr != null) {
+        try {
+          current = Long.parseLong(currentStr);
+        } catch (NumberFormatException e) {
+          return createResponse(HttpResponseStatus.BAD_REQUEST, "Hash value is not an integer");
+        }
+      }
+
+      long newValue = current + increment;
+      hash.put(field, String.valueOf(newValue));
+      return createResponse(HttpResponseStatus.OK, String.valueOf(newValue));
+    } catch (NumberFormatException e) {
+      return createResponse(HttpResponseStatus.BAD_REQUEST, "increment must be a number");
+    }
+  }
+
   private FullHttpResponse handleCacheGet(String key) {
     try {
+      // Сначала проверяем в LIST хранилище
+      if (listStorage.containsKey(key)) {
+        return createResponse(HttpResponseStatus.OK, listStorage.get(key).toString());
+      }
+
+      // Проверяем в HASH хранилище
+      if (hashStorage.containsKey(key)) {
+        return createResponse(HttpResponseStatus.OK, hashStorage.get(key).toString());
+      }
+
       CacheResult result = cacheService.get(key);
 
       if (!result.isSuccess()) {
@@ -194,8 +445,8 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   }
 
   private FullHttpResponse handleCacheWrite(HttpMethod method, String sessionToken,
-      String key, Map<String, String> params,
-      String content) {
+                                            String key, Map<String, String> params,
+                                            String content) {
     String type = params.get("type");
     if (type == null) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
@@ -214,7 +465,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
           "Request body is required for " + method.getMethod() + " method");
     }
 
-    // Парсим TTL если он есть
     String ttlParam = params.get("ttl");
     Long ttlSeconds = null;
     if (ttlParam != null) {
@@ -224,7 +474,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
           return createResponse(HttpResponseStatus.BAD_REQUEST,
               "TTL must be positive");
         }
-        ttlSeconds = ttlMs / 1000; // Конвертируем в секунды для cacheService
+        ttlSeconds = ttlMs / 1000;
       } catch (IllegalArgumentException e) {
         return createResponse(HttpResponseStatus.BAD_REQUEST,
             "Invalid TTL format: " + e.getMessage());
@@ -232,7 +482,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
 
     try {
-      // Получаем пользователя из сессии
       Optional<Session> sessionOpt = sessionService.getValidSession(sessionToken);
       if (sessionOpt.isEmpty()) {
         return createResponse(HttpResponseStatus.UNAUTHORIZED, "Session expired");
@@ -241,11 +490,10 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       User user = sessionOpt.get().getCreator();
       String username = user.getUsername();
 
-      // Рассчитываем размер данных
       CacheResult result;
       if (method.isPost()) {
         result = cacheService.post(key, content, dataType, username, ttlSeconds);
-      } else { // PUT
+      } else {
         result = cacheService.put(key, content, dataType, username, ttlSeconds);
       }
 
@@ -269,6 +517,18 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
   private FullHttpResponse handleCacheDelete(String key) {
     try {
+      // Удаляем из LIST хранилища
+      if (listStorage.containsKey(key)) {
+        listStorage.remove(key);
+        return createResponse(HttpResponseStatus.OK, "Deleted");
+      }
+
+      // Удаляем из HASH хранилища
+      if (hashStorage.containsKey(key)) {
+        hashStorage.remove(key);
+        return createResponse(HttpResponseStatus.OK, "Deleted");
+      }
+
       CacheResult result = cacheService.delete(key);
 
       if (!result.isSuccess()) {
@@ -285,12 +545,11 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   }
 
   private void handleAuthRequest(ChannelHandlerContext ctx, HttpMethod method, String uri,
-      String content, String requestType) {
+                                 String content, String requestType) {
     Map<String, String> params = parseUri(uri);
     FullHttpResponse response;
 
     try {
-      // Для /auth поддерживается только GET
       if (method.isGet()) {
         response = handleAuthLogin(params);
       } else {
@@ -316,19 +575,16 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
 
     try {
-      // Ищем пользователя в базе
       User user = userDAO.findByUsername(login);
 
       if (user == null) {
         return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid login or password");
       }
 
-      // Проверяем пароль
       if (!user.getPassword().equals(password)) {
         return createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid login or password");
       }
 
-      // Создаем сессию для пользователя
       String sessionToken = sessionService.createSessionForUser(user);
 
       return createResponse(HttpResponseStatus.OK,
@@ -345,21 +601,19 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   }
 
   private void handleConfigRequest(ChannelHandlerContext ctx, HttpMethod method, String uri,
-      String content, String requestType) {
+                                   String content, String requestType) {
     Map<String, String> params = parseUri(uri);
     FullHttpResponse response;
 
     try {
       String sessionToken = params.get("session_token");
 
-      // Проверяем валидность сессии
       if (!isSessionValid(sessionToken)) {
         response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
         writeHttpResponse(ctx, response, requestType);
         return;
       }
 
-      // Проверяем сессию
       if (!isSuperAdminSession(sessionToken)) {
         response = createResponse(HttpResponseStatus.FORBIDDEN,
             "Only SUPERADMIN users can modify configuration");
@@ -367,7 +621,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         return;
       }
 
-      // Для /configuration поддерживается только PUT
       if (method.isPut()) {
         response = handleUpdateConfiguration(params);
       } else {
@@ -388,14 +641,12 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     String maxStorageMemoryParam = params.get("max_storage_memory");
     String persistenceParam = params.get("persistence");
 
-    // Проверяем обязательные параметры
     if (maxMemoryPolicyParam == null || maxStorageMemoryParam == null || persistenceParam == null) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
-          "Missing required parameters: maxmemory_policy, max_storage_memory and persistence");
+          "Missing required parameters: max_memory_policy, max_storage_memory and persistence");
     }
 
     try {
-      // Парсим политику памяти
       MaxMemoryPolicy maxMemoryPolicy = MaxMemoryPolicy.fromString(maxMemoryPolicyParam);
       if (maxMemoryPolicy == null) {
         return createResponse(HttpResponseStatus.BAD_REQUEST,
@@ -403,7 +654,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
                 String.join(", ", MaxMemoryPolicy.getAllValues()));
       }
 
-      // Парсим максимальный размер памяти
       long maxStorageMemory;
       try {
         maxStorageMemory = Long.parseLong(maxStorageMemoryParam);
@@ -416,7 +666,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
             "Invalid max_storage_memory format. Must be a number");
       }
 
-      // Парсим параметр persistence
       boolean persistence;
       try {
         persistence = Boolean.parseBoolean(persistenceParam);
@@ -425,7 +674,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
             "Invalid persistence format. Must be 'true' or 'false'");
       }
 
-      // Изменяем конфигурацию кэш-сервиса
       CacheResult result = cacheService.changePolicy(maxMemoryPolicy, maxStorageMemory, persistence);
 
       if (!result.isSuccess()) {
@@ -446,21 +694,19 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   }
 
   private void handleUserRequest(ChannelHandlerContext ctx, HttpMethod method, String uri,
-      String content, String requestType) {
+                                 String content, String requestType) {
     Map<String, String> params = parseUri(uri);
     FullHttpResponse response;
 
     try {
       String sessionToken = params.get("session_token");
 
-      // Проверяем валидность сессии
       if (!isSessionValid(sessionToken)) {
         response = createResponse(HttpResponseStatus.UNAUTHORIZED, "Invalid or expired session");
         writeHttpResponse(ctx, response, requestType);
         return;
       }
 
-      // Проверяем сессию для всех операций с пользователями
       if (!isSuperAdminSession(sessionToken)) {
         response = createResponse(HttpResponseStatus.FORBIDDEN,
             "Only SUPERADMIN users can manage users");
@@ -494,11 +740,10 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     if (newLogin == null || password == null || permissionParam == null) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
-          "Missing required parameters: new_login, password and permission");
+          "Missing required parameters: login, password and permission");
     }
 
     try {
-      // Проверяем формат permission
       PermissionType permissionType = PermissionType.fromString(permissionParam);
       if (permissionType == null) {
         return createResponse(HttpResponseStatus.BAD_REQUEST,
@@ -506,14 +751,12 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
                 String.join(", ", PermissionType.getAllValues()));
       }
 
-      // Проверяем, не существует ли уже пользователь с таким логином
       User existingUser = userDAO.findByUsername(newLogin);
       if (existingUser != null) {
         return createResponse(HttpResponseStatus.CONFLICT,
             "User with login '" + newLogin + "' already exists");
       }
 
-      // Создаем нового пользователя
       User newUser = userDAO.createUser(newLogin, password, permissionType);
 
       if (newUser == null) {
@@ -545,14 +788,12 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
           "Missing required parameter: login");
     }
 
-    // Хотя бы один параметр для обновления должен быть указан
     if (newLogin == null && password == null && permissionParam == null) {
       return createResponse(HttpResponseStatus.BAD_REQUEST,
           "At least one update parameter must be specified: new_login, password or permission");
     }
 
     try {
-      // Находим существующего пользователя
       User existingUser = userDAO.findByUsername(login);
       if (existingUser == null) {
         return createResponse(HttpResponseStatus.NOT_FOUND,
@@ -561,7 +802,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
       sessionService.removeSessionIfExists(existingUser);
 
-      // Парсим permission если указан
       PermissionType permissionType = null;
       if (permissionParam != null) {
         permissionType = PermissionType.fromString(permissionParam);
@@ -572,7 +812,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         }
       }
 
-      // Обновляем пользователя в базе данных
       boolean success = userDAO.updateUser(login, newLogin, password, permissionType);
 
       if (!success) {
@@ -580,7 +819,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
             "Failed to update user");
       }
 
-      // Получаем обновленного пользователя
       User updatedUser = userDAO.findByUsername(newLogin != null ? newLogin : login);
 
       return createResponse(HttpResponseStatus.OK,
@@ -605,14 +843,12 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
 
     try {
-      // Находим пользователя
       User existingUser = userDAO.findByUsername(login);
       if (existingUser == null) {
         return createResponse(HttpResponseStatus.NOT_FOUND,
             "User with login '" + login + "' not found");
       }
 
-      // Удаляем пользователя из базы данных
       boolean success = userDAO.deleteUser(login);
 
       if (!success) {
@@ -633,11 +869,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
   }
 
-  // Вспомогательные методы
-
-  /**
-   * Проверяет валидность сессии
-   */
   private boolean isSessionValid(String sessionToken) {
     if (sessionToken == null) {
       return false;
@@ -645,9 +876,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     return sessionService.getValidSession(sessionToken).isPresent();
   }
 
-  /**
-   * Проверяет, является ли сессия сессией SUPERADMIN
-   */
   private boolean isSuperAdminSession(String sessionToken) {
     if (!isSessionValid(sessionToken)) {
       return false;
@@ -662,9 +890,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     return session.getPermissionType() == PermissionType.SUPERADMIN;
   }
 
-  /**
-   * Парсит строку TTL в миллисекунды
-   */
   private Long parseTTL(String ttlString) throws IllegalArgumentException {
     if (ttlString == null || ttlString.trim().isEmpty()) {
       return null;
@@ -709,9 +934,6 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     }
   }
 
-  /**
-   * Форматирует TTL в удобочитаемую строку
-   */
   private String formatTTL(long ttlMs) {
     if (ttlMs < 1000) {
       return ttlMs + "ms";
@@ -736,31 +958,61 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         "POST   /cache?session_token=TOKEN&key=KEY&type=TYPE&ttl=TTL (with body - insert)\n" +
         "PUT    /cache?session_token=TOKEN&key=KEY&type=TYPE&ttl=TTL (with body - update)\n" +
         "DELETE /cache?session_token=TOKEN&key=KEY\n\n" +
+        "LIST OPERATIONS:\n" +
+        "GET    /cache?session_token=TOKEN&cmd=lrange&key=KEY&start=0&stop=-1\n" +
+        "GET    /cache?session_token=TOKEN&cmd=llen&key=KEY\n" +
+        "POST   /cache?session_token=TOKEN&cmd=lpush&key=KEY&value=VALUE\n" +
+        "POST   /cache?session_token=TOKEN&cmd=rpush&key=KEY&value=VALUE\n" +
+        "GET    /cache?session_token=TOKEN&cmd=lpop&key=KEY\n" +
+        "GET    /cache?session_token=TOKEN&cmd=rpop&key=KEY\n\n" +
+        "HASH OPERATIONS:\n" +
+        "POST   /cache?session_token=TOKEN&cmd=hset&key=KEY&field=FIELD&value=VALUE\n" +
+        "GET    /cache?session_token=TOKEN&cmd=hget&key=KEY&field=FIELD\n" +
+        "DELETE /cache?session_token=TOKEN&cmd=hdel&key=KEY&field=FIELD\n" +
+        "GET    /cache?session_token=TOKEN&cmd=hgetall&key=KEY\n" +
+        "POST   /cache?session_token=TOKEN&cmd=hincrby&key=KEY&field=FIELD&increment=5\n\n" +
         "Data types: " + String.join(", ", DataType.getAllValues()) + "\n" +
         "TTL format: <number>[ms|s|m|h|d] or plain milliseconds\n\n" +
         "USER MANAGEMENT (SUPERADMIN only):\n" +
-        "POST    /user?session_token=TOKEN&new_login=LOGIN&password=PASSWORD&permission=PERMISSION (create user)\n" +
+        "POST    /user?session_token=TOKEN&login=LOGIN&password=PASSWORD&permission=PERMISSION (create user)\n" +
         "PUT   /user?session_token=TOKEN&login=LOGIN&[new_login=LOGIN]&[password=PASSWORD]&[permission=PERMISSION] (update user)\n" +
         "DELETE /user?session_token=TOKEN&login=LOGIN (delete user)\n\n" +
         "Permissions: " + String.join(", ", PermissionType.getAllValues()) + "\n\n" +
         "CONFIGURATION (SUPERADMIN only):\n" +
-        "PUT    /configuration?session_token=TOKEN&maxmemory_policy=POLICY&max_storage_memory=SIZE\n\n" +
+        "PUT    /configuration?session_token=TOKEN&max_memory_policy=POLICY&max_storage_memory=SIZE&persistence=true/false\n\n" +
         "Max memory policies: " + String.join(", ", MaxMemoryPolicy.getAllValues()) + "\n\n" +
         "Examples:\n" +
-        "  Auth:         curl \"http://localhost:8080/auth?login=default&password=admin\"\n" +
-        "  Create user:  curl -X PUT \"http://localhost:8080/user?session_token=XYZ&new_login=bob&password=123&permission=admin\"\n" +
-        "  Set cache:    curl -X POST -d 'data' \"http://localhost:8080/cache?session_token=XYZ&key=test&type=string&ttl=30s\"\n\n" +
+        "  Auth:              curl \"http://localhost:8080/auth?login=default&password=admin123\"\n" +
+        "  Get cache:         curl \"http://localhost:8080/cache?session_token=TOKEN&key=test\"\n" +
+        "  Set cache:         curl -X POST -d 'data' \"http://localhost:8080/cache?session_token=TOKEN&key=test&type=string&ttl=30s\"\n" +
+        "  LPUSH list:        curl -X POST \"http://localhost:8080/cache?session_token=TOKEN&cmd=lpush&key=mylist&value=hello\"\n" +
+        "  LRANGE list:       curl \"http://localhost:8080/cache?session_token=TOKEN&cmd=lrange&key=mylist&start=0&stop=-1\"\n" +
+        "  HSET hash:         curl -X POST \"http://localhost:8080/cache?session_token=TOKEN&cmd=hset&key=myhash&field=name&value=John\"\n" +
+        "  HGET hash:         curl \"http://localhost:8080/cache?session_token=TOKEN&cmd=hget&key=myhash&field=name\"\n\n" +
         "== TCP API (port 9090) ==\n\n" +
         "Connect: telnet localhost 9090\n\n" +
         "COMMANDS:\n" +
         "AUTH <login> <password>    -> authenticate\n" +
-        "GET <key>    -> get value\n" +
+        "GET <key>                  -> get value\n" +
         "SET <key> <type> <value>   -> set value\n" +
-        "DELETE <key>   -> delete value\n\n" +
-        "  TCP connect:  telnet localhost 9090\n" +
-        "  TCP auth:     AUTH default admin123\n" +
-        "  TCP set:      SET mykey string hello\n" +
-        "  TCP get:      GET mykey";
+        "DELETE <key>               -> delete value\n" +
+        "LPUSH <key> <value>        -> left push to list\n" +
+        "RPUSH <key> <value>        -> right push to list\n" +
+        "LRANGE <key> <start> <stop> -> get list range\n" +
+        "LLEN <key>                 -> get list length\n" +
+        "LPOP <key>                 -> left pop from list\n" +
+        "RPOP <key>                 -> right pop from list\n" +
+        "HSET <key> <field> <value> -> set hash field\n" +
+        "HGET <key> <field>         -> get hash field\n" +
+        "HDEL <key> <field>         -> delete hash field\n" +
+        "HGETALL <key>              -> get all hash fields\n" +
+        "HINCRBY <key> <field> <inc> -> increment hash field\n\n" +
+        "TCP examples:\n" +
+        "  AUTH default admin123\n" +
+        "  LPUSH mylist hello\n" +
+        "  LRANGE mylist 0 -1\n" +
+        "  HSET myhash name John\n" +
+        "  HGET myhash name";
 
     FullHttpResponse response = createResponse(HttpResponseStatus.OK, info);
     writeHttpResponse(ctx, response, requestType);
@@ -783,7 +1035,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
       String query = uri.substring(uri.indexOf("?") + 1);
       String[] pairs = query.split("&");
       for (String pair : pairs) {
-        String[] keyValue = pair.split("=");
+        String[] keyValue = pair.split("=", 2);
         if (keyValue.length == 2) {
           params.put(keyValue[0], keyValue[1]);
         }
@@ -850,7 +1102,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
   }
 
   private void writeHttpResponse(ChannelHandlerContext ctx, FullHttpResponse response,
-      String requestType) {
+                                 String requestType) {
     telemetryService.recordHttpRequest(requestType, response.status().code());
     ctx.writeAndFlush(response);
   }
