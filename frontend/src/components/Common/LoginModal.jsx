@@ -4,7 +4,7 @@ import { useNotification } from '../../hooks/useNotification';
 import { FiX, FiEye, FiEyeOff } from 'react-icons/fi';
 import styles from './LoginModal.module.css';
 
-const LoginModal = ({ isOpen, onClose }) => {
+const LoginModal = ({ isOpen, onClose, canClose = true }) => {
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -32,9 +32,11 @@ const LoginModal = ({ isOpen, onClose }) => {
   return (
     <div className={styles.modalOverlay}>
       <div className={styles.modal}>
-        <button className={styles.closeBtn} onClick={onClose}>
-          <FiX />
-        </button>
+        {canClose && (
+          <button className={styles.closeBtn} onClick={onClose}>
+            <FiX />
+          </button>
+        )}
 
         <div className={styles.modalHeader}>
           <h2>Welcome to CacheDB</h2>
@@ -74,11 +76,6 @@ const LoginModal = ({ isOpen, onClose }) => {
                 {showPassword ? <FiEyeOff /> : <FiEye />}
               </button>
             </div>
-          </div>
-
-          <div className={styles.demoCredentials}>
-            <p>Demo credentials:</p>
-            <code>login: default, password: admin123</code>
           </div>
 
           <button

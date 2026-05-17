@@ -29,6 +29,12 @@ const AppContent = () => {
     }
   }, [isAuthenticated, loading]);
 
+  useEffect(() => {
+    if (isAuthenticated) {
+      setShowLogin(false);
+    }
+  }, [isAuthenticated]);
+
   if (loading) {
     return <div className={styles.loading}>Loading...</div>;
   }
@@ -46,7 +52,12 @@ const AppContent = () => {
 
       <LoginModal
         isOpen={showLogin}
-        onClose={() => setShowLogin(false)}
+        canClose={isAuthenticated}
+        onClose={() => {
+          if (isAuthenticated) {
+            setShowLogin(false);
+          }
+        }}
       />
     </>
   );
