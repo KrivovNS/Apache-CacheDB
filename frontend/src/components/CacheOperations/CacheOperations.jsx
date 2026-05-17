@@ -15,7 +15,7 @@ import {
 } from 'react-icons/fi';
 import styles from './CacheOperations.module.css';
 
-const DATA_TYPES = ['string', 'json', 'byte[]'];
+const DATA_TYPES = ['string', 'json', 'bytes[]'];
 const TTL_UNITS = ['ms', 's', 'm', 'h', 'd'];
 
 const CacheOperations = () => {

@@ -116,6 +116,50 @@ class ApiService {
     return this.request('DELETE', '/cache', { key });
   }
 
+  async lpush(key, value) {
+    return this.request('POST', '/cache', { cmd: 'lpush', key, value });
+  }
+
+  async rpush(key, value) {
+    return this.request('POST', '/cache', { cmd: 'rpush', key, value });
+  }
+
+  async lpop(key) {
+    return this.request('GET', '/cache', { cmd: 'lpop', key });
+  }
+
+  async rpop(key) {
+    return this.request('GET', '/cache', { cmd: 'rpop', key });
+  }
+
+  async lrange(key, start, stop) {
+    return this.request('GET', '/cache', { cmd: 'lrange', key, start, stop });
+  }
+
+  async llen(key) {
+    return this.request('GET', '/cache', { cmd: 'llen', key });
+  }
+
+  async hset(key, field, value) {
+    return this.request('POST', '/cache', { cmd: 'hset', key, field, value });
+  }
+
+  async hget(key, field) {
+    return this.request('GET', '/cache', { cmd: 'hget', key, field });
+  }
+
+  async hdel(key, field) {
+    return this.request('DELETE', '/cache', { cmd: 'hdel', key, field });
+  }
+
+  async hgetall(key) {
+    return this.request('GET', '/cache', { cmd: 'hgetall', key });
+  }
+
+  async hincrby(key, field, increment) {
+    return this.request('POST', '/cache', { cmd: 'hincrby', key, field, increment });
+  }
+
   // Управление пользователями
   async createUser(login, password, permission) {
     return this.request('POST', '/user', { login, password, permission });

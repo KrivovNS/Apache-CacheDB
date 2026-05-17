@@ -10,16 +10,24 @@ const QueryConsole = () => {
   const { isAuthenticated } = useAuth();
   const { showSuccess, showError } = useNotification();
 
-  const [query, setQuery] = useState('-- Enter your query here\nGET key_name');
+  const [query, setQuery] = useState('-- LIST commands example:\nLPUSH mylist hello\nLRANGE mylist 0 -1');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState([]);
 
   const sampleQueries = [
-    { name: 'Get value', query: 'GET mykey' },
-    { name: 'Set value', query: 'SET mykey "Hello World"' },
-    { name: 'Delete key', query: 'DELETE mykey' },
-    { name: 'List all keys', query: 'KEYS *' },
+    { name: 'GET value', query: 'GET mykey' },
+    { name: 'SET string', query: 'SET mykey "Hello World" string' },
+    { name: 'LPUSH list', query: 'LPUSH mylist value1' },
+    { name: 'RPUSH list', query: 'RPUSH mylist value2' },
+    { name: 'LRANGE list', query: 'LRANGE mylist 0 -1' },
+    { name: 'LLEN list', query: 'LLEN mylist' },
+    { name: 'LPOP list', query: 'LPOP mylist' },
+    { name: 'HSET hash', query: 'HSET myhash field1 value1' },
+    { name: 'HGET hash', query: 'HGET myhash field1' },
+    { name: 'HGETALL hash', query: 'HGETALL myhash' },
+    { name: 'HINCRBY hash', query: 'HINCRBY myhash counter 5' },
+    { name: 'DELETE key', query: 'DELETE mykey' },
   ];
 
   const executeQuery = async () => {
@@ -66,21 +74,29 @@ const QueryConsole = () => {
     }
   };
 
-  const executeParsedQuery = async (query) => {
-    const parts = query.trim().split(/\s+/);
+  const executeParsedQuery = async (queryStr) => {
+    const parts = queryStr.trim().split(/\s+/);
     const command = parts[0].toUpperCase();
 
     switch (command) {
+      // --- STRING/JSON/BYTES operations ---
       case 'GET':
         if (parts.length < 2) throw new Error('GET requires a key');
-        const response = await api.getCache(parts[1]);
-        return response.data;
+        const getResp = await api.getCache(parts[1]);
+        const data = getResp.data;
+        try {
+          return JSON.parse(data);
+        } catch {
+          return data;
+        }
 
       case 'SET':
         if (parts.length < 3) throw new Error('SET requires key and value');
         const key = parts[1];
-        const value = parts.slice(2).join(' ').replace(/^["']|["']$/g, '');
-        await api.setCache('post', key, value);
+        let value = parts.slice(2).join(' ').replace(/^["']|["']$/g, '');
+        let type = parts.length > 3 ? parts[3] : 'string';
+        if (!['string', 'json', 'byte[]'].includes(type)) type = 'string';
+        await api.setCache('post', key, value, type);
         return 'OK';
 
       case 'DELETE':
@@ -88,14 +104,70 @@ const QueryConsole = () => {
         await api.deleteCache(parts[1]);
         return 'OK';
 
-      case 'KEYS':
-        if (parts.length > 1 && parts[1] !== '*') {
-          throw new Error('Only KEYS * is supported');
-        }
-        return ['key1', 'key2', 'key3']; // Mock response
+      // --- LIST operations ---
+      case 'LPUSH':
+        if (parts.length < 3) throw new Error('LPUSH requires key and value');
+        await api.lpush(parts[1], parts[2]);
+        return 'OK';
+
+      case 'RPUSH':
+        if (parts.length < 3) throw new Error('RPUSH requires key and value');
+        await api.rpush(parts[1], parts[2]);
+        return 'OK';
+
+      case 'LPOP':
+        if (parts.length < 2) throw new Error('LPOP requires a key');
+        const lpopResp = await api.lpop(parts[1]);
+        return lpopResp.data;
+
+      case 'RPOP':
+        if (parts.length < 2) throw new Error('RPOP requires a key');
+        const rpopResp = await api.rpop(parts[1]);
+        return rpopResp.data;
+
+      case 'LRANGE':
+        if (parts.length < 4) throw new Error('LRANGE requires key, start, stop');
+        const start = parseInt(parts[2], 10);
+        const stop = parseInt(parts[3], 10);
+        if (isNaN(start) || isNaN(stop)) throw new Error('start and stop must be integers');
+        const lrangeResp = await api.lrange(parts[1], start, stop);
+        return lrangeResp.data;
+
+      case 'LLEN':
+        if (parts.length < 2) throw new Error('LLEN requires a key');
+        const llenResp = await api.llen(parts[1]);
+        return parseInt(llenResp.data, 10);
+
+      // --- HASH operations ---
+      case 'HSET':
+        if (parts.length < 4) throw new Error('HSET requires key, field, value');
+        await api.hset(parts[1], parts[2], parts[3]);
+        return 'OK';
+
+      case 'HGET':
+        if (parts.length < 3) throw new Error('HGET requires key and field');
+        const hgetResp = await api.hget(parts[1], parts[2]);
+        return hgetResp.data;
+
+      case 'HDEL':
+        if (parts.length < 3) throw new Error('HDEL requires key and field');
+        await api.hdel(parts[1], parts[2]);
+        return 'OK';
+
+      case 'HGETALL':
+        if (parts.length < 2) throw new Error('HGETALL requires a key');
+        const hgetallResp = await api.hgetall(parts[1]);
+        return hgetallResp.data;
+
+      case 'HINCRBY':
+        if (parts.length < 4) throw new Error('HINCRBY requires key, field, increment');
+        const incr = parseInt(parts[3], 10);
+        if (isNaN(incr)) throw new Error('increment must be a number');
+        const hincrResp = await api.hincrby(parts[1], parts[2], incr);
+        return parseInt(hincrResp.data, 10);
 
       default:
-        throw new Error(`Unknown command: ${command}`);
+        throw new Error(`Unknown command: ${command}. Supported: GET, SET, DELETE, LPUSH, RPUSH, LPOP, RPOP, LRANGE, LLEN, HSET, HGET, HDEL, HGETALL, HINCRBY`);
     }
   };
 
@@ -111,6 +183,7 @@ const QueryConsole = () => {
   };
 
   const copyToClipboard = (text) => {
+    if (typeof text === 'object') text = JSON.stringify(text, null, 2);
     navigator.clipboard.writeText(text);
     showSuccess('Copied to clipboard');
   };
@@ -218,7 +291,7 @@ const QueryConsole = () => {
                     </span>
                     <button
                       className={styles.copyBtn}
-                      onClick={() => copyToClipboard(JSON.stringify(result.result || result.error))}
+                      onClick={() => copyToClipboard(result.success ? result.result : result.error)}
                     >
                       <FiCopy />
                     </button>
@@ -230,9 +303,9 @@ const QueryConsole = () => {
 
                   <div className={styles.resultDisplay}>
                     {result.success ? (
-                      typeof result.result === 'string' && result.result.startsWith('{') ? (
+                      typeof result.result === 'object' ? (
                         <ReactJson
-                          src={JSON.parse(result.result)}
+                          src={result.result}
                           theme="monokai"
                           collapsed={false}
                           displayDataTypes={false}
