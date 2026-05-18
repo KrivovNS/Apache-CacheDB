@@ -162,7 +162,7 @@
 
 .sampleName {
   display: block;
-  font-size: 12px;
+  font-size: 8px;
   color: #666;
   margin-bottom: 4px;
 }
@@ -299,8 +299,8 @@
 .resultDisplay {
   padding: 12px;
   background: #1e1e2f;
-  min-height: 100px;
-  max-height: 300px;
+  min-height: 50px;
+  max-height: 100px;
   overflow-x: auto;
   overflow-y: auto;
 }

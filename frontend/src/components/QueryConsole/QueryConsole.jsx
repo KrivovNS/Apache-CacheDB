@@ -294,9 +294,6 @@ const QueryConsole = () => {
       <div className={styles.header}>
         <h1>Query Console</h1>
         <div className={styles.headerActions}>
-          <button className={styles.clearBtn} onClick={clearHistory}>
-            <FiTrash2 /> Clear History
-          </button>
           <button className={styles.clearBtn} onClick={clearResults}>
             <FiTrash2 /> Clear Results
           </button>
