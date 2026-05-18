@@ -8,7 +8,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .header h1 {
@@ -41,11 +41,24 @@
   color: white;
 }
 
+.userInfo {
+  padding: 8px 16px;
+  background: #e8f4fd;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
+  color: #0369a1;
+}
+
+.userInfo strong {
+  color: #667eea;
+}
+
 .content {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
-  height: calc(100vh - 120px);
+  height: calc(100vh - 160px);
 }
 
 .querySection, .resultsSection {
@@ -103,7 +116,7 @@
   padding: 12px;
   border: 2px solid #e0e0e0;
   border-radius: 8px;
-  font-family: monospace;
+  font-family: 'Courier New', monospace;
   font-size: 14px;
   resize: vertical;
   background: #1e1e2f;
@@ -272,32 +285,41 @@
   padding: 12px;
   background: #1e1e2f;
   border-bottom: 1px solid #333;
+  overflow-x: auto;
 }
 
 .queryDisplay code {
-  color: #fff;
-  font-family: monospace;
+  color: #a6e22e;
+  font-family: 'Courier New', monospace;
   font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .resultDisplay {
   padding: 12px;
   background: #1e1e2f;
   min-height: 100px;
+  max-height: 300px;
   overflow-x: auto;
+  overflow-y: auto;
 }
 
 .resultDisplay pre {
   color: #fff;
-  font-family: monospace;
+  font-family: 'Courier New', monospace;
   font-size: 12px;
   white-space: pre-wrap;
+  margin: 0;
 }
 
 .errorMessage {
   color: #f72585;
   font-family: monospace;
   font-size: 12px;
+  padding: 8px;
+  background: rgba(247, 37, 133, 0.1);
+  border-radius: 4px;
 }
 
 .placeholder {
@@ -311,14 +333,21 @@
 
 .warning {
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
   height: 200px;
   background: white;
   border-radius: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  text-align: center;
 }
 
 .warning h2 {
   color: #f72585;
+  margin-bottom: 8px;
+}
+
+.warning p {
+  color: #666;
 }
