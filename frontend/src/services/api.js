@@ -40,14 +40,12 @@ class ApiService {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
     const url = new URL(`${API_BASE_URL}${normalizedEndpoint}`, origin);
 
-    // Add query parameters
     Object.keys(params).forEach((key) => {
       if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
         url.searchParams.append(key, params[key]);
       }
     });
 
-    // Add session token for all endpoints except auth
     if (this.sessionToken && normalizedEndpoint !== '/auth') {
       console.log(`Adding session token to ${endpoint} request:`, this.sessionToken);
       url.searchParams.append('session_token', this.sessionToken);
@@ -187,6 +185,158 @@ class ApiService {
       throw new Error('SQL query is required');
     }
     return this.request('GET', '/cache', { sql });
+  }
+
+  // ============ HASH OPERATIONS ============
+
+  async hset(key, field, value) {
+    if (!key || !field) {
+      throw new Error('Key and field are required');
+    }
+    if (value === undefined || value === null) {
+      throw new Error('Value is required');
+    }
+    return this.request('GET', '/cache', { 
+      hash_op: 'hset',
+      key, 
+      field, 
+      value 
+    });
+  }
+
+  async hget(key, field) {
+    if (!key || !field) {
+      throw new Error('Key and field are required');
+    }
+    return this.request('GET', '/cache', { 
+      hash_op: 'hget',
+      key, 
+      field 
+    });
+  }
+
+  async hdel(key, field) {
+    if (!key || !field) {
+      throw new Error('Key and field are required');
+    }
+    return this.request('GET', '/cache', { 
+      hash_op: 'hdel',
+      key, 
+      field 
+    });
+  }
+
+  async hgetall(key) {
+    if (!key) {
+      throw new Error('Key is required');
+    }
+    return this.request('GET', '/cache', { 
+      hash_op: 'hgetall',
+      key 
+    });
+  }
+
+  async hkeys(key) {
+    if (!key) {
+      throw new Error('Key is required');
+    }
+    return this.request('GET', '/cache', { 
+      hash_op: 'hkeys',
+      key 
+    });
+  }
+
+  async hlen(key) {
+    if (!key) {
+      throw new Error('Key is required');
+    }
+    return this.request('GET', '/cache', { 
+      hash_op: 'hlen',
+      key 
+    });
+  }
+
+  // ============ LIST OPERATIONS ============
+
+  async lpush(key, value) {
+    if (!key || !value) {
+      throw new Error('Key and value are required');
+    }
+    return this.request('GET', '/cache', { 
+      list_op: 'lpush',
+      key, 
+      value 
+    });
+  }
+
+  async rpush(key, value) {
+    if (!key || !value) {
+      throw new Error('Key and value are required');
+    }
+    return this.request('GET', '/cache', { 
+      list_op: 'rpush',
+      key, 
+      value 
+    });
+  }
+
+  async lpop(key) {
+    if (!key) {
+      throw new Error('Key is required');
+    }
+    return this.request('GET', '/cache', { 
+      list_op: 'lpop',
+      key 
+    });
+  }
+
+  async rpop(key) {
+    if (!key) {
+      throw new Error('Key is required');
+    }
+    return this.request('GET', '/cache', { 
+      list_op: 'rpop',
+      key 
+    });
+  }
+
+  async lrange(key, start, end) {
+    if (!key) {
+      throw new Error('Key is required');
+    }
+    if (start === undefined || end === undefined) {
+      throw new Error('Start and end indices are required');
+    }
+    return this.request('GET', '/cache', { 
+      list_op: 'lrange',
+      key, 
+      start: String(start), 
+      end: String(end) 
+    });
+  }
+
+  async llen(key) {
+    if (!key) {
+      throw new Error('Key is required');
+    }
+    return this.request('GET', '/cache', { 
+      list_op: 'llen',
+      key 
+    });
+  }
+
+  async lindex(key, index) {
+    if (!key) {
+      throw new Error('Key is required');
+    }
+    if (index === undefined) {
+      throw new Error('Index is required');
+    }
+    return this.request('GET', '/cache', { 
+      list_op: 'lindex',
+      key, 
+      index: String(index) 
+    });
   }
 }
 

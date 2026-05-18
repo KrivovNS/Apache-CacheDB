@@ -20,6 +20,17 @@ const QueryConsole = () => {
     { name: 'Set string', query: 'SET mykey "Hello World" string' },
     { name: 'Set JSON', query: 'SET userdata \'{"name":"John","age":30}\' json' },
     { name: 'Delete key', query: 'DELETE mykey' },
+    // Hash commands
+    { name: 'HSET', query: 'HSET user:1000 name "Alice"' },
+    { name: 'HGET', query: 'HGET user:1000 name' },
+    { name: 'HGETALL', query: 'HGETALL user:1000' },
+    { name: 'HDEL', query: 'HDEL user:1000 age' },
+    // List commands
+    { name: 'LPUSH', query: 'LPUSH tasks "task1"' },
+    { name: 'RPUSH', query: 'RPUSH tasks "task2"' },
+    { name: 'LPOP', query: 'LPOP tasks' },
+    { name: 'RPOP', query: 'RPOP tasks' },
+    { name: 'LRANGE', query: 'LRANGE tasks 0 -1' },
   ];
 
   const parseCommand = (queryStr) => {
@@ -95,8 +106,93 @@ const QueryConsole = () => {
           resultData = result.data;
           break;
 
+        // ============ HASH COMMANDS ============
+        case 'HSET':
+          if (args.length < 3) throw new Error('HSET requires key, field and value');
+          result = await api.hset(args[0], args[1], args[2]);
+          resultData = result.data;
+          break;
+
+        case 'HGET':
+          if (args.length < 2) throw new Error('HGET requires key and field');
+          result = await api.hget(args[0], args[1]);
+          resultData = result.data;
+          break;
+
+        case 'HDEL':
+          if (args.length < 2) throw new Error('HDEL requires key and field');
+          result = await api.hdel(args[0], args[1]);
+          resultData = result.data;
+          break;
+
+        case 'HGETALL':
+          if (args.length < 1) throw new Error('HGETALL requires a key');
+          result = await api.hgetall(args[0]);
+          resultData = result.data;
+          break;
+
+        case 'HKEYS':
+          if (args.length < 1) throw new Error('HKEYS requires a key');
+          result = await api.hkeys(args[0]);
+          resultData = result.data;
+          break;
+
+        case 'HLEN':
+          if (args.length < 1) throw new Error('HLEN requires a key');
+          result = await api.hlen(args[0]);
+          resultData = result.data;
+          break;
+
+        // ============ LIST COMMANDS ============
+        case 'LPUSH':
+          if (args.length < 2) throw new Error('LPUSH requires key and value');
+          result = await api.lpush(args[0], args[1]);
+          resultData = result.data;
+          break;
+
+        case 'RPUSH':
+          if (args.length < 2) throw new Error('RPUSH requires key and value');
+          result = await api.rpush(args[0], args[1]);
+          resultData = result.data;
+          break;
+
+        case 'LPOP':
+          if (args.length < 1) throw new Error('LPOP requires a key');
+          result = await api.lpop(args[0]);
+          resultData = result.data;
+          break;
+
+        case 'RPOP':
+          if (args.length < 1) throw new Error('RPOP requires a key');
+          result = await api.rpop(args[0]);
+          resultData = result.data;
+          break;
+
+        case 'LRANGE':
+          if (args.length < 3) throw new Error('LRANGE requires key, start and end');
+          const start = parseInt(args[1]);
+          const end = parseInt(args[2]);
+          if (isNaN(start) || isNaN(end)) throw new Error('Start and end must be numbers');
+          result = await api.lrange(args[0], start, end);
+          resultData = result.data;
+          break;
+
+        case 'LLEN':
+          if (args.length < 1) throw new Error('LLEN requires a key');
+          result = await api.llen(args[0]);
+          resultData = result.data;
+          break;
+
+        case 'LINDEX':
+          if (args.length < 2) throw new Error('LINDEX requires key and index');
+          const idx = parseInt(args[1]);
+          if (isNaN(idx)) throw new Error('Index must be a number');
+          result = await api.lindex(args[0], idx);
+          resultData = result.data;
+          break;
+
         default:
-          throw new Error(`Unknown command: ${command}. Available: GET, SET, DELETE, SQL`);
+          throw new Error(`Unknown command: ${command}. Available: GET, SET, DELETE, SQL, HSET, HGET, HDEL, HGETALL, HKEYS, HLEN, LPUSH, RPUSH, LPOP, RPOP, LRANGE, LLEN, LINDEX`);
       }
 
       const executionTime = Date.now() - startTime;

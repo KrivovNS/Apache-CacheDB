@@ -148,10 +148,49 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
             case "UPDATE_CONFIG":
                 handleUpdateConfig(ctx, parts, requestType);
                 break;
+            case "HSET":
+                handleHashSet(ctx, parts, requestType);
+                break;
+            case "HGET":
+                handleHashGet(ctx, parts, requestType);
+                break;
+            case "HDEL":
+                handleHashDel(ctx, parts, requestType);
+                break;
+            case "HGETALL":
+                handleHashGetAll(ctx, parts, requestType);
+                break;
+            case "HKEYS":
+                handleHashKeys(ctx, parts, requestType);
+                break;
+            case "HLEN":
+                handleHashLen(ctx, parts, requestType);
+                break;
+            case "LPUSH":
+                handleListPush(ctx, parts, requestType, true);
+                break;
+            case "RPUSH":
+                handleListPush(ctx, parts, requestType, false);
+                break;
+            case "LPOP":
+                handleListPop(ctx, parts, requestType, true);
+                break;
+            case "RPOP":
+                handleListPop(ctx, parts, requestType, false);
+                break;
+            case "LRANGE":
+                handleListRange(ctx, parts, requestType);
+                break;
+            case "LLEN":
+                handleListLen(ctx, parts, requestType);
+                break;
+            case "LINDEX":
+                handleListIndex(ctx, parts, requestType);
+                break;
             default:
                 writeTcpResponse(ctx, "tcp.unknown", false,
-                        "ERROR Unknown command. Available: AUTH, SQL, GET, SET, PUT, DELETE, " +
-                                "CREATE_USER, UPDATE_USER, DELETE_USER, UPDATE_CONFIG, SHOW_CONFIG, BEGIN, EXEC\n");
+                    "ERROR Unknown command. Available: AUTH, SQL, GET, SET, PUT, DELETE, " +
+                        "CREATE_USER, UPDATE_USER, DELETE_USER, UPDATE_CONFIG, SHOW_CONFIG, BEGIN, EXEC\n");
         }
     }
 
@@ -791,6 +830,254 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
         ctx.close();
     }
 
+    // ============ HASH COMMANDS ============
+
+    private HashCommandHandler hashHandler;
+    private ListCommandHandler listHandler;
+
+    private HashCommandHandler getHashHandler() {
+        if (hashHandler == null) {
+            hashHandler = new HashCommandHandler(new com.mipt.cache.HashCache());
+        }
+        return hashHandler;
+    }
+
+    private ListCommandHandler getListHandler() {
+        if (listHandler == null) {
+            listHandler = new ListCommandHandler(new com.mipt.cache.ListCache());
+        }
+        return listHandler;
+    }
+
+    private void handleHashSet(ChannelHandlerContext ctx, String[] parts, String requestType) {
+        if (!isAuthenticated(ctx, requestType)) return;
+        if (!hasWritePermission(ctx, requestType)) return;
+        if (parts.length < 4) {
+            writeTcpResponse(ctx, requestType, false, "ERROR Usage: HSET <key> <field> <value>\n");
+            return;
+        }
+
+        String key = parts[1];
+        String field = parts[2];
+        String value = parts[3];
+
+        CacheResult result = getHashHandler().hset(key, field, value);
+        if (result.isSuccess()) {
+            writeTcpResponse(ctx, requestType, true, "OK " + result.getMessage() + "\n");
+        } else {
+            writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
+        }
+    }
+
+    private void handleHashGet(ChannelHandlerContext ctx, String[] parts, String requestType) {
+        if (!isAuthenticated(ctx, requestType)) return;
+        if (parts.length < 3) {
+            writeTcpResponse(ctx, requestType, false, "ERROR Usage: HGET <key> <field>\n");
+            return;
+        }
+
+        String key = parts[1];
+        String field = parts[2];
+
+        CacheResult result = getHashHandler().hget(key, field);
+        if (result.isSuccess()) {
+            writeTcpResponse(ctx, requestType, true, "OK " + result.getData() + "\n");
+        } else {
+            writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
+        }
+    }
+
+    private void handleHashDel(ChannelHandlerContext ctx, String[] parts, String requestType) {
+        if (!isAuthenticated(ctx, requestType)) return;
+        if (!hasWritePermission(ctx, requestType)) return;
+        if (parts.length < 3) {
+            writeTcpResponse(ctx, requestType, false, "ERROR Usage: HDEL <key> <field>\n");
+            return;
+        }
+
+        String key = parts[1];
+        String field = parts[2];
+
+        CacheResult result = getHashHandler().hdel(key, field);
+        if (result.isSuccess()) {
+            writeTcpResponse(ctx, requestType, true, "OK " + result.getMessage() + "\n");
+        } else {
+            writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
+        }
+    }
+
+    private void handleHashGetAll(ChannelHandlerContext ctx, String[] parts, String requestType) {
+        if (!isAuthenticated(ctx, requestType)) return;
+        if (parts.length < 2) {
+            writeTcpResponse(ctx, requestType, false, "ERROR Usage: HGETALL <key>\n");
+            return;
+        }
+
+        String key = parts[1];
+
+        CacheResult result = getHashHandler().hgetall(key);
+        if (result.isSuccess()) {
+            writeTcpResponse(ctx, requestType, true, "OK\n" + result.getData());
+        } else {
+            writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
+        }
+    }
+
+    private void handleHashKeys(ChannelHandlerContext ctx, String[] parts, String requestType) {
+        if (!isAuthenticated(ctx, requestType)) return;
+        if (parts.length < 2) {
+            writeTcpResponse(ctx, requestType, false, "ERROR Usage: HKEYS <key>\n");
+            return;
+        }
+
+        String key = parts[1];
+
+        CacheResult result = getHashHandler().hkeys(key);
+        if (result.isSuccess()) {
+            writeTcpResponse(ctx, requestType, true, "OK\n" + result.getData());
+        } else {
+            writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
+        }
+    }
+
+    private void handleHashLen(ChannelHandlerContext ctx, String[] parts, String requestType) {
+        if (!isAuthenticated(ctx, requestType)) return;
+        if (parts.length < 2) {
+            writeTcpResponse(ctx, requestType, false, "ERROR Usage: HLEN <key>\n");
+            return;
+        }
+
+        String key = parts[1];
+
+        CacheResult result = getHashHandler().hlen(key);
+        if (result.isSuccess()) {
+            writeTcpResponse(ctx, requestType, true, "OK " + result.getMessage() + "\n");
+        } else {
+            writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
+        }
+    }
+
+    // ============ LIST COMMANDS ============
+
+    private void handleListPush(ChannelHandlerContext ctx, String[] parts, String requestType, boolean left) {
+        if (!isAuthenticated(ctx, requestType)) return;
+        if (!hasWritePermission(ctx, requestType)) return;
+        if (parts.length < 3) {
+            String cmd = left ? "LPUSH" : "RPUSH";
+            writeTcpResponse(ctx, requestType, false, "ERROR Usage: " + cmd + " <key> <value>\n");
+            return;
+        }
+
+        String key = parts[1];
+        String value = parts[2];
+
+        CacheResult result;
+        if (left) {
+            result = getListHandler().lpush(key, value);
+        } else {
+            result = getListHandler().rpush(key, value);
+        }
+
+        if (result.isSuccess()) {
+            writeTcpResponse(ctx, requestType, true, "OK " + result.getMessage() + "\n");
+        } else {
+            writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
+        }
+    }
+
+    private void handleListPop(ChannelHandlerContext ctx, String[] parts, String requestType, boolean left) {
+        if (!isAuthenticated(ctx, requestType)) return;
+        if (!hasWritePermission(ctx, requestType)) return;
+        if (parts.length < 2) {
+            String cmd = left ? "LPOP" : "RPOP";
+            writeTcpResponse(ctx, requestType, false, "ERROR Usage: " + cmd + " <key>\n");
+            return;
+        }
+
+        String key = parts[1];
+
+        CacheResult result;
+        if (left) {
+            result = getListHandler().lpop(key);
+        } else {
+            result = getListHandler().rpop(key);
+        }
+
+        if (result.isSuccess()) {
+            writeTcpResponse(ctx, requestType, true, "OK " + result.getMessage() + "\n");
+        } else {
+            writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
+        }
+    }
+
+    private void handleListRange(ChannelHandlerContext ctx, String[] parts, String requestType) {
+        if (!isAuthenticated(ctx, requestType)) return;
+        if (parts.length < 4) {
+            writeTcpResponse(ctx, requestType, false, "ERROR Usage: LRANGE <key> <start> <end>\n");
+            return;
+        }
+
+        String key = parts[1];
+        int start, end;
+
+        try {
+            start = Integer.parseInt(parts[2]);
+            end = Integer.parseInt(parts[3]);
+        } catch (NumberFormatException e) {
+            writeTcpResponse(ctx, requestType, false, "ERROR Invalid start or end index\n");
+            return;
+        }
+
+        CacheResult result = getListHandler().lrange(key, start, end);
+        if (result.isSuccess()) {
+            writeTcpResponse(ctx, requestType, true, "OK\n" + result.getData());
+        } else {
+            writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
+        }
+    }
+
+    private void handleListLen(ChannelHandlerContext ctx, String[] parts, String requestType) {
+        if (!isAuthenticated(ctx, requestType)) return;
+        if (parts.length < 2) {
+            writeTcpResponse(ctx, requestType, false, "ERROR Usage: LLEN <key>\n");
+            return;
+        }
+
+        String key = parts[1];
+
+        CacheResult result = getListHandler().llen(key);
+        if (result.isSuccess()) {
+            writeTcpResponse(ctx, requestType, true, "OK " + result.getMessage() + "\n");
+        } else {
+            writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
+        }
+    }
+
+    private void handleListIndex(ChannelHandlerContext ctx, String[] parts, String requestType) {
+        if (!isAuthenticated(ctx, requestType)) return;
+        if (parts.length < 3) {
+            writeTcpResponse(ctx, requestType, false, "ERROR Usage: LINDEX <key> <index>\n");
+            return;
+        }
+
+        String key = parts[1];
+        int index;
+
+        try {
+            index = Integer.parseInt(parts[2]);
+        } catch (NumberFormatException e) {
+            writeTcpResponse(ctx, requestType, false, "ERROR Invalid index\n");
+            return;
+        }
+
+        CacheResult result = getListHandler().lindex(key, index);
+        if (result.isSuccess()) {
+            writeTcpResponse(ctx, requestType, true, "OK " + result.getMessage() + "\n");
+        } else {
+            writeTcpResponse(ctx, requestType, false, "ERROR " + result.getMessage() + "\n");
+        }
+    }
+
     private boolean isClientDisconnect(Throwable cause) {
         Throwable current = cause;
         while (current != null) {
@@ -809,4 +1096,5 @@ public class NettyTcpHandler extends SimpleChannelInboundHandler<String> {
         }
         return false;
     }
+
 }
