@@ -209,9 +209,9 @@ const QueryConsole = () => {
       setResults(prev => [resultItem, ...prev]);
       addToHistory(query);
       showSuccess(`Query executed in ${executionTime}ms`);
-    } catch (error) {
+      setQuery('');
+      } catch (error) {
       const executionTime = Date.now() - startTime;
-
       const resultItem = {
         id: Date.now(),
         query,
