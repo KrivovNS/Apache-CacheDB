@@ -15,23 +15,23 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     const token = localStorage.getItem('sessionToken');
-    if (token) {
-      api.setSessionToken(token);
-      const storedUser = localStorage.getItem('cacheDbUser');
-      if (storedUser) {
-        try {
-          const parsed = JSON.parse(storedUser);
-          setUser(parsed);
-          setIsAuthenticated(true);
-          setIsSuperAdmin(!!parsed.isSuperAdmin);
-        } catch {
-          // Если парсинг не удался, очищаем некорректные данные
-          localStorage.removeItem('cacheDbUser');
-        }
-      } else {
-        // Если информации о пользователе нет, считаем, что нужно перелогиниться
+    const storedUser = localStorage.getItem('cacheDbUser');
+
+    if (token && storedUser) {
+      try {
+        api.setSessionToken(token);
+        const parsed = JSON.parse(storedUser);
+        setUser(parsed);
+        setIsAuthenticated(true);
+        setIsSuperAdmin(parsed.permission === 'superadmin');
+      } catch (error) {
+        console.error('Failed to parse stored user:', error);
+        localStorage.removeItem('cacheDbUser');
+        localStorage.removeItem('sessionToken');
         api.clearSession();
       }
+    } else {
+      api.clearSession();
     }
     setLoading(false);
   }, []);
@@ -42,7 +42,6 @@ export const AuthProvider = ({ children }) => {
       const result = await api.login(login, password);
       console.log('Login result:', result);
 
-      // Parse user info from response
       const userMatch = result.match(/User: (\w+)/);
       const permissionMatch = result.match(/Permission: (\w+)/);
 
@@ -58,12 +57,12 @@ export const AuthProvider = ({ children }) => {
       setUser(userData);
       setIsAuthenticated(true);
       setIsSuperAdmin(permission === 'superadmin');
-
       localStorage.setItem('cacheDbUser', JSON.stringify(userData));
 
       return userData;
     } catch (error) {
       console.error('Login error:', error);
+      api.clearSession();
       throw error;
     }
   };

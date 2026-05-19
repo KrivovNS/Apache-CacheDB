@@ -353,7 +353,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     // ============ CACHE HANDLERS ============
 
     private void handleCacheRequest(ChannelHandlerContext ctx, HttpMethod method, String uri,
-            String content, String requestType) {
+                                    String content, String requestType) {
         Map<String, String> params = parseUri(uri);
         String sessionToken = params.get("session_token");
 
@@ -363,7 +363,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
             return;
         }
 
-        // ========== SQL ЗАПРОС (НОВЫЙ ФУНКЦИОНАЛ) ==========
+        // ========== SQL ЗАПРОС ==========
         String sqlEncoded = params.get("sql");
         if (sqlEncoded != null && !sqlEncoded.isEmpty()) {
             String sql = decodeUrl(sqlEncoded);
@@ -378,10 +378,23 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
             return;
         }
 
+        // ========== HASH OPERATIONS ==========
+        String hashOp = params.get("hash_op");
+        if (hashOp != null && !hashOp.isEmpty()) {
+            handleHashOperation(ctx, method, params, content, requestType, sessionToken);
+            return;
+        }
+
+        // ========== LIST OPERATIONS ==========
+        String listOp = params.get("list_op");
+        if (listOp != null && !listOp.isEmpty()) {
+            handleListOperation(ctx, method, params, content, requestType, sessionToken);
+            return;
+        }
+
         String key = params.get("key");
         if (key == null) {
             sendBadRequest(ctx, "Missing required parameters: session_token and key", requestType);
-
             return;
         }
 
@@ -402,7 +415,7 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
             } else if (method.isWriteMethod()) {
                 if (userPermission == PermissionType.READER) {
                     response = createResponse(HttpResponseStatus.FORBIDDEN,
-                            "READER users can only get data");
+                        "READER users can only get data");
                     writeHttpResponse(ctx, response, requestType);
                     return;
                 }
@@ -410,19 +423,19 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
             } else if (method.isDelete()) {
                 if (userPermission == PermissionType.READER) {
                     response = createResponse(HttpResponseStatus.FORBIDDEN,
-                            "READER users can only get data");
+                        "READER users can only get data");
                     writeHttpResponse(ctx, response, requestType);
                     return;
                 }
                 response = handleCacheDelete(key);
             } else {
                 response = createResponse(HttpResponseStatus.METHOD_NOT_ALLOWED,
-                        "Method " + method.getMethod() + " not allowed for cache endpoint");
+                    "Method " + method.getMethod() + " not allowed for cache endpoint");
             }
         } catch (Exception e) {
             log.error("Error processing cache request", e);
             response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
-                    "Server error: " + e.getMessage());
+                "Server error: " + e.getMessage());
         }
 
         writeHttpResponse(ctx, response, requestType);
@@ -438,6 +451,207 @@ public class NettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
         } catch (Exception e) {
             return createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
                     "Error reading data: " + e.getMessage());
+        }
+    }
+
+    // ============ HASH OPERATION HANDLERS ==========
+
+    private void handleHashOperation(ChannelHandlerContext ctx, HttpMethod method,
+                                     Map<String, String> params, String content, String requestType, String sessionToken) {
+
+        if (!method.isGet()) {
+            sendBadRequest(ctx, "Hash operations only support GET method", requestType);
+            return;
+        }
+
+        Optional<Session> sessionOpt = sessionService.getValidSession(sessionToken);
+        if (sessionOpt.isEmpty()) {
+            sendUnauthorized(ctx, "Invalid session");
+            return;
+        }
+
+        Session session = sessionOpt.get();
+        PermissionType userPermission = session.getPermissionType();
+
+        String hashOp = params.get("hash_op");
+        String key = params.get("key");
+        String field = params.get("field");
+        String value = params.get("value");
+
+        if (key == null || key.trim().isEmpty()) {
+            sendBadRequest(ctx, "Missing required parameter: key", requestType);
+            return;
+        }
+
+        // Для операций записи проверяем права
+        boolean isWriteOp = "hset".equals(hashOp) || "hdel".equals(hashOp);
+        if (isWriteOp && userPermission == PermissionType.READER) {
+            sendForbidden(ctx, "READER users cannot write");
+            return;
+        }
+
+        CacheResult result;
+        String username = session.getCreator().getUsername();
+
+        try {
+            switch (hashOp) {
+                case "hset":
+                    if (field == null || value == null) {
+                        sendBadRequest(ctx, "HSET requires field and value parameters", requestType);
+                        return;
+                    }
+                    result = cacheService.hashSet(key, field, value, username);
+                    break;
+                case "hget":
+                    if (field == null) {
+                        sendBadRequest(ctx, "HGET requires field parameter", requestType);
+                        return;
+                    }
+                    result = cacheService.hashGet(key, field);
+                    break;
+                case "hdel":
+                    if (field == null) {
+                        sendBadRequest(ctx, "HDEL requires field parameter", requestType);
+                        return;
+                    }
+                    result = cacheService.hashDel(key, field);
+                    break;
+                case "hgetall":
+                    result = cacheService.hashGetAll(key);
+                    break;
+                case "hkeys":
+                    result = cacheService.hashKeys(key);
+                    break;
+                case "hlen":
+                    result = cacheService.hashLen(key);
+                    break;
+                default:
+                    sendBadRequest(ctx, "Unknown hash operation: " + hashOp, requestType);
+                    return;
+            }
+
+            FullHttpResponse response;
+            if (result.isSuccess()) {
+                response = createResponse(HttpResponseStatus.OK, result.getMessage() + "\n" +
+                    (result.getData() != null ? result.getData().toString() : ""));
+            } else {
+                response = createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
+            }
+            writeHttpResponse(ctx, response, requestType);
+
+        } catch (Exception e) {
+            log.error("Error processing hash operation: {}", hashOp, e);
+            FullHttpResponse response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+                "Error: " + e.getMessage());
+            writeHttpResponse(ctx, response, requestType);
+        }
+    }
+
+// ============ LIST OPERATION HANDLERS ==========
+
+    private void handleListOperation(ChannelHandlerContext ctx, HttpMethod method,
+                                     Map<String, String> params, String content, String requestType, String sessionToken) {
+
+        if (!method.isGet()) {
+            sendBadRequest(ctx, "List operations only support GET method", requestType);
+            return;
+        }
+
+        Optional<Session> sessionOpt = sessionService.getValidSession(sessionToken);
+        if (sessionOpt.isEmpty()) {
+            sendUnauthorized(ctx, "Invalid session");
+            return;
+        }
+
+        Session session = sessionOpt.get();
+        PermissionType userPermission = session.getPermissionType();
+
+        String listOp = params.get("list_op");
+        String key = params.get("key");
+        String value = params.get("value");
+        String startStr = params.get("start");
+        String endStr = params.get("end");
+        String indexStr = params.get("index");
+
+        if (key == null || key.trim().isEmpty()) {
+            sendBadRequest(ctx, "Missing required parameter: key", requestType);
+            return;
+        }
+
+        // Для операций записи проверяем права
+        boolean isWriteOp = "lpush".equals(listOp) || "rpush".equals(listOp) ||
+            "lpop".equals(listOp) || "rpop".equals(listOp);
+        if (isWriteOp && userPermission == PermissionType.READER) {
+            sendForbidden(ctx, "READER users cannot write");
+            return;
+        }
+
+        CacheResult result;
+        String username = session.getCreator().getUsername();
+
+        try {
+            switch (listOp) {
+                case "lpush":
+                    if (value == null) {
+                        sendBadRequest(ctx, "LPUSH requires value parameter", requestType);
+                        return;
+                    }
+                    result = cacheService.listLPush(key, value, username);
+                    break;
+                case "rpush":
+                    if (value == null) {
+                        sendBadRequest(ctx, "RPUSH requires value parameter", requestType);
+                        return;
+                    }
+                    result = cacheService.listRPush(key, value, username);
+                    break;
+                case "lpop":
+                    result = cacheService.listLPop(key);
+                    break;
+                case "rpop":
+                    result = cacheService.listRPop(key);
+                    break;
+                case "lrange":
+                    if (startStr == null || endStr == null) {
+                        sendBadRequest(ctx, "LRANGE requires start and end parameters", requestType);
+                        return;
+                    }
+                    int start = Integer.parseInt(startStr);
+                    int end = Integer.parseInt(endStr);
+                    result = cacheService.listLRange(key, start, end);
+                    break;
+                case "llen":
+                    result = cacheService.listLLen(key);
+                    break;
+                case "lindex":
+                    if (indexStr == null) {
+                        sendBadRequest(ctx, "LINDEX requires index parameter", requestType);
+                        return;
+                    }
+                    int index = Integer.parseInt(indexStr);
+                    result = cacheService.listLIndex(key, index);
+                    break;
+                default:
+                    sendBadRequest(ctx, "Unknown list operation: " + listOp, requestType);
+                    return;
+            }
+
+            FullHttpResponse response;
+            if (result.isSuccess()) {
+                response = createResponse(HttpResponseStatus.OK, result.getMessage() + "\n" +
+                    (result.getData() != null ? result.getData().toString() : ""));
+            } else {
+                response = createResponse(HttpResponseStatus.BAD_REQUEST, result.getMessage());
+            }
+            writeHttpResponse(ctx, response, requestType);
+
+        } catch (NumberFormatException e) {
+            sendBadRequest(ctx, "Invalid number format for range or index", requestType);
+        } catch (Exception e) {
+            log.error("Error processing list operation: {}", listOp, e);
+            FullHttpResponse response = createResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR,
+                "Error: " + e.getMessage());
+            writeHttpResponse(ctx, response, requestType);
         }
     }
 

@@ -19,47 +19,55 @@ public class RequestParametersValidator {
 
     // Допустимые параметры для каждого endpoint
     private static final Set<String> GET_CACHE_PARAMS = Set.of(
-            "session_token", "key"
+        "session_token", "key"
     );
 
     private static final Set<String> GET_CACHE_PARAMS_WITH_SQL = Set.of(
-            "session_token", "sql", "key"
+        "session_token", "sql", "key"
+    );
+
+    private static final Set<String> GET_CACHE_PARAMS_WITH_HASH = Set.of(
+        "session_token", "hash_op", "key", "field", "value"
+    );
+
+    private static final Set<String> GET_CACHE_PARAMS_WITH_LIST = Set.of(
+        "session_token", "list_op", "key", "value", "start", "end", "index"
     );
 
     private static final Set<String> POST_CACHE_PARAMS = Set.of(
-            "session_token", "key", "type", "ttl"
+        "session_token", "key", "type", "ttl"
     );
 
     private static final Set<String> PUT_CACHE_PARAMS = Set.of(
-            "session_token", "key", "type", "ttl"
+        "session_token", "key", "type", "ttl"
     );
 
     private static final Set<String> DELETE_CACHE_PARAMS = Set.of(
-            "session_token", "key"
+        "session_token", "key"
     );
 
     private static final Set<String> GET_AUTH_PARAMS = Set.of(
-            "login", "password"
+        "login", "password"
     );
 
     private static final Set<String> POST_USER_PARAMS = Set.of(
-            "session_token", "login", "password", "permission"
+        "session_token", "login", "password", "permission"
     );
 
     private static final Set<String> PUT_USER_PARAMS = Set.of(
-            "session_token", "login", "new_login", "password", "permission"
+        "session_token", "login", "new_login", "password", "permission"
     );
 
     private static final Set<String> DELETE_USER_PARAMS = Set.of(
-            "session_token", "login"
+        "session_token", "login"
     );
 
     private static final Set<String> GET_USER_PARAMS = Set.of(
-            "session_token"
+        "session_token"
     );
 
     private static final Set<String> PUT_CONFIG_PARAMS = Set.of(
-            "session_token", "max_memory_policy", "max_storage_memory", "persistence"
+        "session_token", "max_memory_policy", "max_storage_memory", "persistence"
     );
 
     // Основной метод валидации для NettyHandler
@@ -100,14 +108,30 @@ public class RequestParametersValidator {
         switch (method.toUpperCase()) {
             case "GET":
                 boolean hasSql = params.containsKey("sql") && getFirstParam(params, "sql") != null;
+                boolean hasHashOp = params.containsKey("hash_op") && getFirstParam(params, "hash_op") != null;
+                boolean hasListOp = params.containsKey("list_op") && getFirstParam(params, "list_op") != null;
                 boolean hasKey = params.containsKey("key") && getFirstParam(params, "key") != null;
 
-                if (!hasSql && !hasKey) {
-                    result.addError("Parameter 'key' or 'sql' is required for GET");
+                if (!hasSql && !hasHashOp && !hasListOp && !hasKey) {
+                    result.addError("Parameter 'key', 'sql', 'hash_op' or 'list_op' is required for GET");
                 }
 
                 if (hasSql) {
                     validateStringLength(result, getFirstParam(params, "sql"), "sql", 1, MAX_SQL_LENGTH);
+                }
+
+                if (hasHashOp) {
+                    String hashOp = getFirstParam(params, "hash_op");
+                    if (!isValidHashOp(hashOp)) {
+                        result.addError("Invalid hash_op. Valid: hset, hget, hdel, hgetall, hkeys, hlen");
+                    }
+                }
+
+                if (hasListOp) {
+                    String listOp = getFirstParam(params, "list_op");
+                    if (!isValidListOp(listOp)) {
+                        result.addError("Invalid list_op. Valid: lpush, rpush, lpop, rpop, lrange, llen, lindex");
+                    }
                 }
 
                 validateRequiredParam(result, params, "session_token");
@@ -134,7 +158,7 @@ public class RequestParametersValidator {
             String type = getFirstParam(params, "type");
             if (!DataType.isValid(type)) {
                 result.addError(
-                        "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
+                    "Invalid data type. Allowed: " + String.join(", ", DataType.getAllValues()));
             }
         }
 
@@ -164,12 +188,35 @@ public class RequestParametersValidator {
         }
     }
 
+    private boolean isValidHashOp(String hashOp) {
+        return hashOp != null && (
+            "hset".equals(hashOp) ||
+                "hget".equals(hashOp) ||
+                "hdel".equals(hashOp) ||
+                "hgetall".equals(hashOp) ||
+                "hkeys".equals(hashOp) ||
+                "hlen".equals(hashOp)
+        );
+    }
+
+    private boolean isValidListOp(String listOp) {
+        return listOp != null && (
+            "lpush".equals(listOp) ||
+                "rpush".equals(listOp) ||
+                "lpop".equals(listOp) ||
+                "rpop".equals(listOp) ||
+                "lrange".equals(listOp) ||
+                "llen".equals(listOp) ||
+                "lindex".equals(listOp)
+        );
+    }
+
     private void validateAuthRequest(String method, String uri, ValidationResult result) {
         Map<String, List<String>> params = parseUriParameters(uri);
 
         if (!"GET".equalsIgnoreCase(method)) {
             result.addError(
-                    "Unsupported method for auth endpoint: " + method + ". Only GET is allowed");
+                "Unsupported method for auth endpoint: " + method + ". Only GET is allowed");
             return;
         }
 
@@ -218,7 +265,7 @@ public class RequestParametersValidator {
                 break;
             default:
                 result.addError("Invalid method for user endpoint: " + method +
-                        ". Allowed: GET, PUT, POST, DELETE");
+                    ". Allowed: GET, PUT, POST, DELETE");
                 return;
         }
 
@@ -242,11 +289,11 @@ public class RequestParametersValidator {
                 validateRequiredParam(result, params, "session_token");
                 validateRequiredParam(result, params, "login");
                 boolean hasOptionalParam = params.containsKey("new_login") ||
-                        params.containsKey("password") ||
-                        params.containsKey("permission");
+                    params.containsKey("password") ||
+                    params.containsKey("permission");
                 if (!hasOptionalParam) {
                     result.addError("At least one optional parameter must be specified for PUT: " +
-                            "new_login, password, or permission");
+                        "new_login, password, or permission");
                 }
                 break;
             case "DELETE":
@@ -292,7 +339,7 @@ public class RequestParametersValidator {
             String permission = getFirstParam(params, "permission");
             if (!PermissionType.isValid(permission)) {
                 result.addError(
-                        "Invalid permission type. Allowed: " + String.join(", ", PermissionType.getAllValues()));
+                    "Invalid permission type. Allowed: " + String.join(", ", PermissionType.getAllValues()));
             }
         }
     }
@@ -302,7 +349,7 @@ public class RequestParametersValidator {
 
         if (!"PUT".equalsIgnoreCase(method)) {
             result.addError(
-                    "Unsupported method for configuration endpoint: " + method + ". Only PUT is allowed");
+                "Unsupported method for configuration endpoint: " + method + ". Only PUT is allowed");
             return;
         }
 
@@ -335,7 +382,7 @@ public class RequestParametersValidator {
         String policy = getFirstParam(params, "max_memory_policy");
         if (!MaxMemoryPolicy.isValid(policy)) {
             result.addError(
-                    "Invalid max_memory_policy. Allowed: " + String.join(", ", MaxMemoryPolicy.getAllValues()));
+                "Invalid max_memory_policy. Allowed: " + String.join(", ", MaxMemoryPolicy.getAllValues()));
         }
 
         String maxMemory = getFirstParam(params, "max_storage_memory");
@@ -373,6 +420,12 @@ public class RequestParametersValidator {
                 if (params.containsKey("sql")) {
                     return GET_CACHE_PARAMS_WITH_SQL;
                 }
+                if (params.containsKey("hash_op")) {
+                    return GET_CACHE_PARAMS_WITH_HASH;
+                }
+                if (params.containsKey("list_op")) {
+                    return GET_CACHE_PARAMS_WITH_LIST;
+                }
                 return GET_CACHE_PARAMS;
             case "POST":
                 return POST_CACHE_PARAMS;
@@ -387,7 +440,7 @@ public class RequestParametersValidator {
 
     private boolean isValidCacheMethod(String method) {
         return "GET".equals(method) || "POST".equals(method) ||
-                "PUT".equals(method) || "DELETE".equals(method);
+            "PUT".equals(method) || "DELETE".equals(method);
     }
 
     private boolean isValidTTLFormat(String ttl) {
@@ -398,34 +451,34 @@ public class RequestParametersValidator {
         String ttlLower = ttl.toLowerCase().trim();
 
         return ttlLower.matches("^\\d+$") ||
-                ttlLower.matches("^\\d+ms$") ||
-                ttlLower.matches("^\\d+s$") ||
-                ttlLower.matches("^\\d+m$") ||
-                ttlLower.matches("^\\d+h$") ||
-                ttlLower.matches("^\\d+d$");
+            ttlLower.matches("^\\d+ms$") ||
+            ttlLower.matches("^\\d+s$") ||
+            ttlLower.matches("^\\d+m$") ||
+            ttlLower.matches("^\\d+h$") ||
+            ttlLower.matches("^\\d+d$");
     }
 
     private void validateNoExtraParams(ValidationResult result,
-            Map<String, List<String>> params,
-            Set<String> allowedParams,
-            String endpointName) {
+                                       Map<String, List<String>> params,
+                                       Set<String> allowedParams,
+                                       String endpointName) {
         for (String paramName : params.keySet()) {
             if (!allowedParams.contains(paramName)) {
                 result.addError("Unexpected parameter '" + paramName + "' for " + endpointName +
-                        ". Allowed parameters: " + String.join(", ", allowedParams));
+                    ". Allowed parameters: " + String.join(", ", allowedParams));
             }
         }
     }
 
     private void validateSingleValueParams(ValidationResult result,
-            Map<String, List<String>> params,
-            Set<String> paramNames) {
+                                           Map<String, List<String>> params,
+                                           Set<String> paramNames) {
         for (String paramName : paramNames) {
             if (params.containsKey(paramName)) {
                 List<String> values = params.get(paramName);
                 if (values != null && values.size() > 1) {
                     result.addError(
-                            "Parameter '" + paramName + "' should have only one value, but got " + values.size());
+                        "Parameter '" + paramName + "' should have only one value, but got " + values.size());
                 }
             }
         }
@@ -437,7 +490,7 @@ public class RequestParametersValidator {
     }
 
     private void validateStringLength(ValidationResult result, String value, String fieldName,
-            int min, int max) {
+                                      int min, int max) {
         if (value == null) {
             return;
         }
@@ -452,7 +505,7 @@ public class RequestParametersValidator {
     }
 
     private void validateRequiredParam(ValidationResult result, Map<String, List<String>> params,
-            String paramName) {
+                                       String paramName) {
         String value = getFirstParam(params, paramName);
         if (value == null || value.trim().isEmpty()) {
             result.addError("Parameter '" + paramName + "' is required and cannot be empty");

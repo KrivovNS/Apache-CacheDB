@@ -1,6 +1,8 @@
 package com.mipt.service;
 
 import com.mipt.cache.CacheResult;
+import com.mipt.cache.HashCache;
+import com.mipt.cache.ListCache;
 import com.mipt.database.dao.CacheEntryDAO;
 import com.mipt.model.CacheStorage;
 import com.mipt.model.DataType;
@@ -9,7 +11,10 @@ import com.mipt.model.MaxMemoryPolicy;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.SQLException;
+import java.util.List;
+import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -24,6 +29,10 @@ public class CacheStorageService {
     private boolean canPolicyBeChanged;
     private boolean persistence;
     private final CacheEntryDAO cacheEntryDAO;
+
+    // Hash and List caches
+    private HashCache hashCache;
+    private ListCache listCache;
 
     public CacheStorageService() {
         try {
@@ -71,9 +80,8 @@ public class CacheStorageService {
         return CacheResult.error("The key already exists");
     }
 
-    // Kept for backward compatibility; sizeBytes is ignored.
     public CacheResult post(String key, Object value, DataType dataType,
-            String user, Long ttlSeconds, long sizeBytes) {
+                            String user, Long ttlSeconds, long sizeBytes) {
         return post(key, value, dataType, user, ttlSeconds);
     }
 
@@ -84,9 +92,8 @@ public class CacheStorageService {
         return CacheResult.error("The key not exists");
     }
 
-    // Kept for backward compatibility; sizeBytes is ignored.
     public CacheResult put(String key, Object value, DataType dataType,
-            String user, Long ttlSeconds, long sizeBytes) {
+                           String user, Long ttlSeconds, long sizeBytes) {
         return put(key, value, dataType, user, ttlSeconds);
     }
 
@@ -152,6 +159,8 @@ public class CacheStorageService {
 
     private void createCacheStorages() {
         database = new CacheStorage(maxMemory, maxMemoryPolicy, persistence, cacheEntryDAO);
+        hashCache = new HashCache();
+        listCache = new ListCache();
     }
 
     public long getUsedMemoryBytes() {
@@ -162,19 +171,197 @@ public class CacheStorageService {
         return maxMemory;
     }
 
-    // ========== МЕТОДЫ ДЛЯ ДРАЙВЕРА ==========
-
-    /**
-     * Возвращает, включена ли персистентность
-     */
     public boolean isPersistenceEnabled() {
         return persistence;
     }
 
-    /**
-     * Возвращает текущую политику вытеснения памяти
-     */
     public MaxMemoryPolicy getMaxMemoryPolicy() {
         return maxMemoryPolicy;
+    }
+
+    // ============ HASH OPERATIONS ==========
+
+    private HashCache getHashCache() {
+        if (hashCache == null) {
+            hashCache = new HashCache();
+        }
+        return hashCache;
+    }
+
+    public CacheResult hashSet(String key, String field, String value, String username) {
+        try {
+            HashCache hashCache = getHashCache();
+            hashCache.hset(key, field, value);
+            return CacheResult.success("Field set successfully");
+        } catch (Exception e) {
+            return CacheResult.error("HSET error: " + e.getMessage());
+        }
+    }
+
+    public CacheResult hashGet(String key, String field) {
+        try {
+            HashCache hashCache = getHashCache();
+            Object value = hashCache.hget(key, field);
+            if (value == null) {
+                return CacheResult.error("Field not found");
+            }
+            return CacheResult.success(value.toString());
+        } catch (Exception e) {
+            return CacheResult.error("HGET error: " + e.getMessage());
+        }
+    }
+
+    public CacheResult hashDel(String key, String field) {
+        try {
+            HashCache hashCache = getHashCache();
+            Object removed = hashCache.hdel(key, field);
+            if (removed == null) {
+                return CacheResult.error("Field not found");
+            }
+            return CacheResult.success("Field deleted successfully");
+        } catch (Exception e) {
+            return CacheResult.error("HDEL error: " + e.getMessage());
+        }
+    }
+
+    public CacheResult hashGetAll(String key) {
+        try {
+            HashCache hashCache = getHashCache();
+            Map<Object, Object> result = hashCache.hgetall(key);
+            if (result.isEmpty()) {
+                return CacheResult.error("Hash not found or empty");
+            }
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<Object, Object> entry : result.entrySet()) {
+                sb.append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+            }
+            return CacheResult.success(sb.toString());
+        } catch (Exception e) {
+            return CacheResult.error("HGETALL error: " + e.getMessage());
+        }
+    }
+
+    public CacheResult hashKeys(String key) {
+        try {
+            HashCache hashCache = getHashCache();
+            Set<Object> result = hashCache.hkeys(key);
+            if (result.isEmpty()) {
+                return CacheResult.error("Hash not found or empty");
+            }
+            StringBuilder sb = new StringBuilder();
+            for (Object field : result) {
+                sb.append(field).append("\n");
+            }
+            return CacheResult.success(sb.toString());
+        } catch (Exception e) {
+            return CacheResult.error("HKEYS error: " + e.getMessage());
+        }
+    }
+
+    public CacheResult hashLen(String key) {
+        try {
+            HashCache hashCache = getHashCache();
+            int size = hashCache.hlen(key);
+            return CacheResult.success("Hash has " + size + " field(s)");
+        } catch (Exception e) {
+            return CacheResult.error("HLEN error: " + e.getMessage());
+        }
+    }
+
+    // ============ LIST OPERATIONS ==========
+
+    private ListCache getListCache() {
+        if (listCache == null) {
+            listCache = new ListCache();
+        }
+        return listCache;
+    }
+
+    public CacheResult listLPush(String key, String value, String username) {
+        try {
+            ListCache listCache = getListCache();
+            listCache.lpush(key, value);
+            int size = listCache.llen(key);
+            return CacheResult.success("Pushed to left. List size: " + size);
+        } catch (Exception e) {
+            return CacheResult.error("LPUSH error: " + e.getMessage());
+        }
+    }
+
+    public CacheResult listRPush(String key, String value, String username) {
+        try {
+            ListCache listCache = getListCache();
+            listCache.rpush(key, value);
+            int size = listCache.llen(key);
+            return CacheResult.success("Pushed to right. List size: " + size);
+        } catch (Exception e) {
+            return CacheResult.error("RPUSH error: " + e.getMessage());
+        }
+    }
+
+    public CacheResult listLPop(String key) {
+        try {
+            ListCache listCache = getListCache();
+            Object value = listCache.lpop(key);
+            if (value == null) {
+                return CacheResult.error("List is empty or does not exist");
+            }
+            return CacheResult.success("Popped: " + value);
+        } catch (Exception e) {
+            return CacheResult.error("LPOP error: " + e.getMessage());
+        }
+    }
+
+    public CacheResult listRPop(String key) {
+        try {
+            ListCache listCache = getListCache();
+            Object value = listCache.rpop(key);
+            if (value == null) {
+                return CacheResult.error("List is empty or does not exist");
+            }
+            return CacheResult.success("Popped: " + value);
+        } catch (Exception e) {
+            return CacheResult.error("RPOP error: " + e.getMessage());
+        }
+    }
+
+    public CacheResult listLRange(String key, int start, int end) {
+        try {
+            ListCache listCache = getListCache();
+            List<Object> range = listCache.lrange(key, start, end);
+            if (range.isEmpty()) {
+                return CacheResult.error("List is empty or range invalid");
+            }
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < range.size(); i++) {
+                sb.append("[").append(start + i).append("] ").append(range.get(i)).append("\n");
+            }
+            return CacheResult.success(sb.toString());
+        } catch (Exception e) {
+            return CacheResult.error("LRANGE error: " + e.getMessage());
+        }
+    }
+
+    public CacheResult listLLen(String key) {
+        try {
+            ListCache listCache = getListCache();
+            int size = listCache.llen(key);
+            return CacheResult.success("List size: " + size);
+        } catch (Exception e) {
+            return CacheResult.error("LLEN error: " + e.getMessage());
+        }
+    }
+
+    public CacheResult listLIndex(String key, int index) {
+        try {
+            ListCache listCache = getListCache();
+            Object value = listCache.lindex(key, index);
+            if (value == null) {
+                return CacheResult.error("Index out of range or list empty");
+            }
+            return CacheResult.success("Value at index " + index + ": " + value);
+        } catch (Exception e) {
+            return CacheResult.error("LINDEX error: " + e.getMessage());
+        }
     }
 }
